@@ -1,5 +1,5 @@
 """Session OBD : transport série (pyserial) vers un adaptateur
-ELM327/STN (OBDLink EX, puce STN2230, pont FTDI), protocole ELM,
+ELM327/STN (OBDLink EX, puce STN2232, pont FTDI), protocole ELM,
 opérations OBD-II et UDS/ISO-TP.
 
 Portage de SessionObd.kt (Diag Forester, build 1).
@@ -67,6 +67,8 @@ class SessionObd:
         self.journal = journal or JournalSession()
         self.connecte = False
         self.moniteur_actif = False
+        self.est_stn = False
+        self.adaptateur: str | None = None
         self.protocole: str | None = None
         self.vin: str | None = None
         self.kilometrage_km: float | None = None
@@ -115,6 +117,19 @@ class SessionObd:
             raise IOError(
                 "L'adaptateur ne répond pas aux commandes AT "
                 f"(essayés : {', '.join(str(d) for d in DEBITS_ESSAIS)} bauds)")
+        # Identification STN (OBDLink) : les puces ScanTool répondent
+        # à STI par leur firmware (« STN2232 v5.10.3 ») — aucun clone
+        # ELM ne connaît cette commande. Sert à choisir STMA plutôt
+        # qu'ATMA pour le moniteur (manuel FRPM OBDLink : STMA ouvre
+        # en plus le filtre matériel CAN à « tout passe »).
+        try:
+            infos = self._commande_brute("STI", 2.0)
+            if "STN" in infos.upper():
+                self.est_stn = True
+                propres = [l.strip() for l in infos.splitlines() if l.strip()]
+                self.adaptateur = propres[0] if propres else "STN"
+        except Exception:
+            pass
         self.connecte = True
         self.journal.demarrer()
         self._initialiser_elm()
@@ -281,6 +296,64 @@ class SessionObd:
                 "classe": resultat.classe,
             })
             return resultat
+
+    def requete_brute(self, adresse: int, requete: bytes,
+                      delai_s: float = 4.0) -> bytes | None:
+        """Charge utile ISO-TP brute à une adresse physique, réponse
+        brute (octets) sans classification UDS. C'est le transport du
+        SSM-sur-CAN (voir ssm.py) : l'adaptateur ajoute le PCI ISO-TP
+        et le flow control, la charge utile ne contient que le
+        protocole applicatif. None = silence ou erreur adaptateur."""
+        with self._verrou:
+            if not self.connecte:
+                raise IOError("Adaptateur non connecté")
+            if self.moniteur_actif:
+                raise IOError("Moniteur CAN actif : arrête-le d'abord")
+            if self._en_tete_courante != adresse:
+                self._commande_interne("ATSP6")
+                self._commande_interne(f"ATSH{adresse:03X}")
+                self._commande_interne(f"ATCRA{adresse + 8:03X}")
+                self._commande_interne("ATH0")
+                self._en_tete_courante = adresse
+            self._ecrire(vers_texte(requete, ""))
+            brut = self._lire_jusqua_invite(delai_s)
+            lignes = lignes_utiles(brut)
+            if erreur_connue(lignes) is not None:
+                octets = None
+            else:
+                octets = octets_depuis_lignes(lignes) or None
+            self.journal.evenement("requete_brute", {
+                "adresse": f"{adresse:03X}",
+                "requete": vers_texte(requete),
+                "reponse": vers_texte(octets) if octets else None,
+            })
+            return octets
+
+    def requete_fonctionnelle(self, requete: bytes,
+                              delai_s: float = 3.0) -> list[str]:
+        """Requête fonctionnelle (0x7DF) avec en-têtes visibles et
+        masque de réception à zéro : les lignes brutes retournées
+        montrent l'ID CAN de CHAQUE module qui répond (0x7E8, 0x7EA…),
+        quel qu'il soit. Restaure ATH0 et invalide l'en-tête courant."""
+        with self._verrou:
+            if not self.connecte:
+                raise IOError("Adaptateur non connecté")
+            if self.moniteur_actif:
+                raise IOError("Moniteur CAN actif : arrête-le d'abord")
+            self._commande_interne("ATSP6")
+            self._commande_interne("ATSH7DF")
+            self._commande_interne("ATCM00000000")
+            self._commande_interne("ATH1")
+            self._ecrire(vers_texte(requete, ""))
+            brut = self._lire_jusqua_invite(delai_s)
+            self._commande_interne("ATH0")
+            self._en_tete_courante = -1
+            lignes = lignes_utiles(brut)
+            self.journal.evenement("requete_fonctionnelle", {
+                "requete": vers_texte(requete),
+                "lignes": lignes,
+            })
+            return lignes
 
     def _retour_mode_obd(self) -> None:
         with self._verrou:
@@ -508,7 +581,14 @@ class SessionObd:
                 self.moniteur_erreur = None
                 self.moniteur_lignes_brutes = []
                 self.moniteur_nb_trames = 0
-                self._ecrire("ATMA")
+                # STMA sur les puces ScanTool (OBDLink) : identique à
+                # ATMA, mais ouvre AUSSI le filtre matériel CAN à
+                # « tout passe » (manuel FRPM §11.2). ATMA seul peut
+                # rester muet derrière ce filtre. Sur le Forester, le
+                # segment DLC est de toute façon silencieux hors
+                # diagnostic (passerelle) ; STMA servira sur les
+                # véhicules dont le bus de diffusion atteint la prise.
+                self._ecrire("STMA" if self.est_stn else "ATMA")
                 self.moniteur_actif = True
                 while not self._arret_moniteur:
                     ligne = self._lire_ligne(0.4)

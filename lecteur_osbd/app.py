@@ -20,7 +20,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import buildinfo, maj, pids as pids_mod, registry
+from . import buildinfo, maj, pids as pids_mod, registry, ssm as ssm_mod
 from .hexutil import est_hex, vers_octets, vers_texte
 from .journal import JournalSession
 from .session import SessionObd, lister_ports
@@ -31,6 +31,11 @@ TEXTE_FREINS = (
     "piloté par le module VDC — le même qui gère l'ABS et "
     "l'antipatinage. Aucune commande d'actionneur dans ce build : "
     "on lit, on ne commande pas.\n\n"
+    "Le VDC d'un Subaru ne parle pas UDS : sa voie est le SSM "
+    "(protocole constructeur, encapsulé dans ISO-TP), adresse CAN "
+    "présumée 0x7E2. Le bouton « Rechercher les modules SSM » fait "
+    "l'init SSM (AA) aux adresses 7E0–7E4 — 7E0/7E1 sont les témoins "
+    "connus — plus un filet de sondes UDS directes au cas où.\n\n"
     "Sur le Sprinter, le frein de stationnement est mécanique "
     "(levier) ; le module ESP reste lisible en diagnostic.\n\n"
     "Vitesses de roue en direct : démarre le moniteur CAN (trame "
@@ -194,8 +199,21 @@ class Application(tk.Tk):
         self.onglets.add(onglet, text="Freins / VDC")
         ttk.Label(onglet, text=TEXTE_FREINS, wraplength=900, justify=tk.LEFT,
                   padding=8).pack(anchor="w")
-        ttk.Button(onglet, text="Lire l'état freins / VDC",
-                   command=self._lire_freins).pack(anchor="w", padx=8)
+        boutons = ttk.Frame(onglet)
+        boutons.pack(anchor="w", padx=8)
+        ttk.Button(boutons, text="Lire l'état freins / VDC",
+                   command=self._lire_freins).pack(side=tk.LEFT)
+        ttk.Button(boutons, text="Rechercher les modules SSM (VDC…)",
+                   command=self._rechercher_ssm).pack(side=tk.LEFT, padx=6)
+        lecture = ttk.Frame(onglet, padding=(8, 6))
+        lecture.pack(anchor="w")
+        ttk.Label(lecture, text="Lecture SSM (A8) — module (hex) :").pack(side=tk.LEFT)
+        self.var_ssm_module = tk.StringVar(value="7E2")
+        ttk.Entry(lecture, textvariable=self.var_ssm_module, width=6).pack(side=tk.LEFT, padx=4)
+        ttk.Label(lecture, text="adresses mémoire (hex, virgules) :").pack(side=tk.LEFT)
+        self.var_ssm_adresses = tk.StringVar(value="")
+        ttk.Entry(lecture, textvariable=self.var_ssm_adresses, width=34).pack(side=tk.LEFT, padx=4)
+        ttk.Button(lecture, text="Lire", command=self._lire_ssm).pack(side=tk.LEFT)
         self.texte_freins = self._zone_texte(onglet)
 
     def _onglet_historique(self) -> None:
@@ -726,6 +744,72 @@ class Application(tk.Tk):
             lignes += [f"{c.ligne_affichage()}  [{c.origine}]" for c in chassis]
             self._remplir(self.texte_freins, "\n".join(lignes))
             self._statut("Écran freins mis à jour (lecture seule).")
+
+        self._en_arriere_plan(travail, succes)
+
+    def _rechercher_ssm(self) -> None:
+        if not self._exiger_connexion():
+            return
+        self._statut("Recherche des modules SSM (init AA, 7E0–7E4)…")
+
+        def travail():
+            modules = ssm_mod.recensement_ssm(self.session)
+            sondes = ssm_mod.sondes_uds_dormantes(self.session)
+            return modules, sondes
+
+        def succes(resultat):
+            modules, sondes = resultat
+            lignes = ["MODULES SSM (init AA)"]
+            lignes += [m.ligne_affichage() for m in modules]
+            vdc = next((m for m in modules if m.adresse == 0x7E2), None)
+            lignes.append("")
+            if vdc is not None and vdc.repond:
+                lignes.append("VDC TROUVÉ en SSM à 0x7E2. Prochaine "
+                              "étape : sa carte d'adresses DTC.")
+            else:
+                lignes.append("Le VDC n'a pas répondu à l'init SSM "
+                              "à 0x7E2 — voir les sondes ci-dessous.")
+            lignes += ["", *sondes.lignes_affichage()]
+            self._remplir(self.texte_freins, "\n".join(lignes))
+            self._statut("Recherche SSM terminée (journalisée).")
+
+        self._en_arriere_plan(travail, succes)
+
+    def _lire_ssm(self) -> None:
+        if not self._exiger_connexion():
+            return
+        try:
+            module = int(self.var_ssm_module.get().strip(), 16)
+            adresses = [int(morceau.strip(), 16)
+                        for morceau in self.var_ssm_adresses.get().split(",")
+                        if morceau.strip()]
+        except ValueError:
+            messagebox.showwarning(buildinfo.APP_NAME,
+                                   "Module et adresses en hexadécimal "
+                                   "(ex. module 7E2, adresses 000056, 000057).")
+            return
+        if not adresses:
+            messagebox.showwarning(buildinfo.APP_NAME,
+                                   "Donne au moins une adresse mémoire à lire.")
+            return
+        self._statut(f"Lecture SSM A8 → {module:03X}…")
+
+        def travail():
+            return ssm_mod.lire_adresses(self.session, module, adresses)
+
+        def succes(resultat):
+            lignes = [f"LECTURE SSM — module {module:03X}"]
+            if resultat is None:
+                lignes.append("Pas de réponse de lecture (E8) — le module "
+                              "n'a pas répondu ou ne parle pas SSM.")
+            else:
+                lignes += [f"  {adresse:06X} = {valeur:02X} ({valeur})"
+                           for adresse, valeur in resultat]
+                if len(resultat) < len(adresses):
+                    lignes.append(f"({len(adresses) - len(resultat)} "
+                                  "adresse(s) sans valeur retournée)")
+            self._remplir(self.texte_freins, "\n".join(lignes))
+            self._statut("Lecture SSM terminée.")
 
         self._en_arriere_plan(travail, succes)
 

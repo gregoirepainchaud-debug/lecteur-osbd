@@ -120,3 +120,19 @@ le projet Android : l'humain capture, l'IA lit).
 - Journal de session horodaté par action de l'utilisateur
   (bouton testé, cycle d'ignition) — leçon Beards : sans marqueurs
   d'action, un log peut mentir.
+
+## Build 4 (2026-11-26) — chasse au VDC par le SSM
+
+- Constat terrain : la prise OBD du Forester (plateforme globale
+  Subaru) est derrière une passerelle — aucun trafic libre n'y
+  circule, l'écoute passive y est un corridor vide (ATMA et STMA
+  muets, diagnostic parfait). Détail : `NOTES-TERRAIN.md`.
+- `ssm.py` : SSM-sur-CAN (protocole constructeur Subaru encapsulé
+  dans ISO-TP) — init AA → EA, lecture A8, recensement 7E0–7E4
+  (VDC présumé à 7E2 d'après la table d'adressage SSM), sondes
+  UDS dormantes (19 02 FF direct + fonctionnel). Onglet
+  Freins / VDC : bouton de recherche SSM et outil de lecture A8.
+  Lecture seule, comme tout l'onglet.
+- Détection STN à la connexion (commande STI) ; le moniteur
+  utilise STMA sur les puces ScanTool (filtre matériel ouvert,
+  manuel FRPM OBDLink §11.2), ATMA sinon.
