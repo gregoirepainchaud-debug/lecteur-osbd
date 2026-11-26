@@ -275,3 +275,92 @@ class TestJournal(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBuild2Codes(unittest.TestCase):
+    """Correctifs du build 2, prouvés sur les réponses réelles du
+    Forester du 2026-11-26."""
+
+    def test_statut_reel(self):
+        # Dictionnaire : jamais en panne
+        self.assertFalse(dtc.est_reel(0x40))  # testNotCompletedThisCycle
+        self.assertFalse(dtc.est_reel(0x50))  # + notCompletedSinceClear
+        self.assertFalse(dtc.est_reel(0x00))
+        self.assertFalse(dtc.est_reel(None))
+        # Pannes : historique, actif, confirmé, en attente
+        self.assertTrue(dtc.est_reel(0x60))   # failedSinceLastClear (P0016)
+        self.assertTrue(dtc.est_reel(0x01))
+        self.assertTrue(dtc.est_reel(0x08))
+        self.assertTrue(dtc.est_reel(0x04))
+
+    def test_texte_statut(self):
+        self.assertIn("historique", dtc.texte_statut(0x60))
+        self.assertIn("actif", dtc.texte_statut(0x01))
+        self.assertIn("confirmé", dtc.texte_statut(0x08))
+
+    def test_uds_filtre_sur_reponse_type_denso(self):
+        # 59 02 7E puis : P0016 historique (0x60), P2764 dictionnaire (0x40)
+        octets = bytes([0x59, 0x02, 0x7E,
+                        0x00, 0x16, 0x04, 0x60,
+                        0x27, 0x64, 0x00, 0x40])
+        tous = uds.analyser_dtc(octets, "Module 7E0")
+        self.assertEqual(len(tous), 2)
+        reels = [c for c in tous if dtc.est_reel(c.statut)]
+        self.assertEqual([c.code for c in reels], ["P0016"])
+        self.assertEqual(reels[0].statut, 0x60)
+
+    def test_mode_aligne_normal(self):
+        octets = bytes([0x43, 0x01, 0x16, 0x00, 0x00])
+        codes = dtc.analyser_reponse_mode(octets, "Moteur (confirmés)")
+        self.assertEqual([c.code for c in codes], ["P0116"])
+
+    def test_mode_decalage_terrain(self):
+        # Le bogue du 2026-11-26 : un octet parasite avant l'octet de
+        # réponse produisait P0043/P0047/P004A. Réponse « aucun code »
+        # décalée -> aucun code ; vraie réponse décalée -> le vrai code.
+        self.assertEqual(
+            dtc.analyser_reponse_mode(bytes([0x00, 0x43, 0x00, 0x00]),
+                                        "Moteur (confirmés)"), [])
+        codes = dtc.analyser_reponse_mode(
+            bytes([0x00, 0x47, 0x01, 0x16]), "Moteur (en attente)")
+        self.assertEqual([c.code for c in codes], ["P0116"])
+
+    def test_mode_sans_octet_reponse(self):
+        self.assertEqual(
+            dtc.analyser_reponse_mode(bytes([0x11, 0x22, 0x33, 0x44]),
+                                        "Moteur (confirmés)"), [])
+
+
+class TestBuild2JournalContinu(unittest.TestCase):
+    def test_ecriture_a_chaque_evenement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            j = JournalSession()
+            j.demarrer()
+            chemin = j.definir_fichier(Path(tmp) / "sessions")
+            self.assertTrue(chemin.exists())
+            j.evenement("recensement", {"modules": []})
+            contenu = chemin.read_text(encoding="utf-8")
+            self.assertIn("recensement", contenu)
+            j.evenement("lecture_codes", {"codes": []})
+            contenu = chemin.read_text(encoding="utf-8")
+            self.assertIn("lecture_codes", contenu)
+
+
+class TestBuild2Registre(unittest.TestCase):
+    def test_fusion_doublon_vin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = registry.Registre(Path(tmp))
+            r.ajouter(registry.Vehicule(nom="Forester Greg", vin=""))
+            r.ajouter(registry.Vehicule(
+                nom="Forester Greg", vin="JF2SKEBC0KH580816"))
+            self.assertEqual(registry.fusionner_doublons(r), 1)
+            self.assertEqual(len(r.vehicules), 1)
+            self.assertEqual(r.vehicules[0].vin, "JF2SKEBC0KH580816")
+
+    def test_pas_de_fusion_si_deux_vin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = registry.Registre(Path(tmp))
+            r.ajouter(registry.Vehicule(nom="Auto", vin="VIN1"))
+            r.ajouter(registry.Vehicule(nom="Auto", vin="VIN2"))
+            self.assertEqual(registry.fusionner_doublons(r), 0)
+            self.assertEqual(len(r.vehicules), 2)

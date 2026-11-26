@@ -196,3 +196,29 @@ def comparer_sessions(session_a: dict, session_b: dict) -> dict:
         "disparus": sorted(codes_a - codes_b),
         "persistants": sorted(codes_a & codes_b),
     }
+
+
+def fusionner_doublons(registre: "Registre") -> int:
+    """Fusionne les fiches de même nom dont une seule porte un VIN
+    (cas vu le 2026-11-26 : fiche créée à la main sans VIN, puis seconde
+    fiche créée à la connexion quand le VIN est lu). Les dossiers sont
+    nommés par le nom — même nom, même dossier : rien à déplacer.
+    Retourne le nombre de fiches retirées."""
+    par_nom: dict[str, list[Vehicule]] = {}
+    for v in registre.vehicules:
+        par_nom.setdefault(nom_dossier_sain(v.nom).lower(), []).append(v)
+    retires = 0
+    for groupe in par_nom.values():
+        if len(groupe) < 2:
+            continue
+        avec_vin = [v for v in groupe if v.vin]
+        if len(avec_vin) != 1:
+            continue
+        garde = avec_vin[0]
+        for v in groupe:
+            if v is not garde:
+                registre.vehicules.remove(v)
+                retires += 1
+    if retires:
+        registre.enregistrer()
+    return retires

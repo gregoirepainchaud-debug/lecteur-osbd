@@ -78,6 +78,9 @@ class SessionObd:
         self._en_tete_courante = -1
         self._arret_moniteur = False
         self._fichier_capture = None
+        self.moniteur_erreur: str | None = None
+        self.moniteur_lignes_brutes: list[str] = []
+        self.moniteur_nb_trames = 0
 
     # --- Transport ---------------------------------------------------
 
@@ -302,7 +305,10 @@ class SessionObd:
                 repond = True  # il répond, en refusant : il est là
                 refus = f"NRC 0x{r.nrc:02X} — {r.description_nrc}"
             elif r.classe == "erreur_adaptateur":
-                refus = r.message
+                # « NO DATA » de l'adaptateur = le module ne répond pas :
+                # c'est un silence, pas un refus (libellé corrigé au
+                # build 2 — le build 1 affichait « refuse : NO DATA »).
+                refus = None
             if repond:
                 r2 = self.uds(adresse, uds_mod.requete_lire_did(uds_mod.DID_NUMERO_PIECE), 2.5)
                 if r2.classe == "positive":
@@ -342,7 +348,11 @@ class SessionObd:
         for module in [m for m in modules if m.repond]:
             r = self.uds(module.adresse, uds_mod.requete_lire_dtc(), 5.0)
             if r.classe == "positive":
-                codes.extend(uds_mod.analyser_dtc(r.octets, f"Module {module.adresse_hex}"))
+                tous = uds_mod.analyser_dtc(r.octets, f"Module {module.adresse_hex}")
+                # Les modules répondent leur dictionnaire complet : seuls
+                # les enregistrements dont l'octet de statut témoigne
+                # d'une panne (présente ou passée) sont des codes.
+                codes.extend(c for c in tous if dtc_mod.est_reel(c.statut))
             elif r.classe == "refus":
                 self.journal.evenement("lecture_dtc_refusee", {
                     "adresse": module.adresse_hex, "nrc": f"0x{r.nrc:02X}"})
@@ -356,7 +366,8 @@ class SessionObd:
                 uniques.append(c)
         self.derniers_codes = uniques
         self.journal.evenement("lecture_codes", {
-            "codes": [{"code": c.code, "origine": c.origine} for c in uniques]})
+            "codes": [{"code": c.code, "origine": c.origine,
+                       "statut": c.statut} for c in uniques]})
         return uniques
 
     def lire_freeze_frame(self) -> list[str]:
@@ -471,14 +482,25 @@ class SessionObd:
                 fichier = open(chemin_capture, "w", encoding="utf-8", newline="")
                 self._fichier_capture = fichier
                 fichier.write(canbus.ENTETE_SAVVYCAN + "\n")
+                fichier.flush()
                 base_ms = time.time() * 1000
                 self.etat_can = EtatCan()
+                self.moniteur_erreur = None
+                self.moniteur_lignes_brutes = []
+                self.moniteur_nb_trames = 0
                 self._ecrire("ATMA")
                 self.moniteur_actif = True
                 while not self._arret_moniteur:
                     ligne = self._lire_ligne(0.4)
                     if ligne is None or ligne == ">":
                         continue
+                    # Échantillon des lignes brutes, telles que reçues :
+                    # si le format de l'adaptateur diffère de ce que le
+                    # parseur attend, la preuve survit (build 2 — le
+                    # build 1 avalait tout en silence, capture vide
+                    # inexplicable le 2026-11-26).
+                    if len(self.moniteur_lignes_brutes) < 50:
+                        self.moniteur_lignes_brutes.append(ligne)
                     analyse = canbus.analyser_ligne(ligne)
                     if analyse is None:
                         continue
@@ -487,11 +509,16 @@ class SessionObd:
                         continue
                     trame = TrameCan(can_id, donnees, int(time.time() * 1000))
                     fichier.write(canbus.ligne_savvycan(trame, base_ms / 1000.0) + "\n")
+                    self.moniteur_nb_trames += 1
+                    if self.moniteur_nb_trames % 50 == 0:
+                        fichier.flush()
                     self.etat_can = canbus.appliquer(self.etat_can, can_id, donnees)
                     self._etat_can_maj_ms = time.time() * 1000
                     rappel(trame, self.etat_can)
-            except Exception:
-                pass
+            except Exception as exc:
+                # Jamais d'échec muet : l'erreur est conservée et
+                # l'app la journalise à l'arrêt du moniteur.
+                self.moniteur_erreur = f"{type(exc).__name__} : {exc}"
             finally:
                 try:
                     self._ecrire("")

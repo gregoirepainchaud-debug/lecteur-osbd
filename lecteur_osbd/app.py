@@ -47,6 +47,7 @@ class Application(tk.Tk):
 
         self.racine_donnees = registry.dossier_donnees()
         self.registre = registry.Registre.charger(self.racine_donnees)
+        registry.fusionner_doublons(self.registre)
         self.journal = JournalSession()
         self.session = SessionObd(self.journal)
         self.vehicule_courant: registry.Vehicule | None = None
@@ -332,6 +333,15 @@ class Application(tk.Tk):
                 self.vehicule_courant = connu
                 self.var_vehicule.set(connu.libelle())
                 self._statut(f"Véhicule reconnu par son VIN : {connu.libelle()}")
+            elif (self.vehicule_courant is not None
+                    and not self.vehicule_courant.vin):
+                # Fiche sélectionnée créée à la main avant la connexion :
+                # on lui rattache le VIN lu plutôt que créer un doublon.
+                self.vehicule_courant.vin = self.vin_lu
+                self.registre.enregistrer()
+                self._statut(
+                    f"VIN rattaché à la fiche existante : "
+                    f"{self.vehicule_courant.libelle()}")
             else:
                 if messagebox.askyesno(
                         buildinfo.APP_NAME,
@@ -339,6 +349,12 @@ class Application(tk.Tk):
                         "Ce véhicule n'est pas dans ton garage. "
                         "Créer sa fiche maintenant ?"):
                     self._dialogue_ajout_vehicule(vin_prefill=self.vin_lu)
+        registry.fusionner_doublons(self.registre)
+        # Journal en écriture continue dès que le dossier est connu.
+        try:
+            self.journal.definir_fichier(self._dossier_courant() / "sessions")
+        except Exception:
+            pass
         self._sauvegarder_session_historique()
 
     def _nom_vehicule_courant(self) -> str:
@@ -368,6 +384,8 @@ class Application(tk.Tk):
     def _boucle_tension(self) -> None:
         if self.session.connecte and not self.session.moniteur_actif:
             def travail():
+                if self.session.moniteur_actif:
+                    return None
                 self.session.maj_tension()
                 return self.session.derniere_tension
             self._en_arriere_plan(
@@ -601,7 +619,23 @@ class Application(tk.Tk):
             self.session.arreter_moniteur()
             self._moniteur_en_cours = False
             self.bouton_moniteur.config(text="Démarrer l'écoute")
-            self._statut("Moniteur arrêté. La capture complète est sur le disque.")
+            self.journal.evenement("moniteur_bilan", {
+                "trames_enregistrees": self.session.moniteur_nb_trames,
+                "erreur": self.session.moniteur_erreur,
+                "lignes_brutes": list(self.session.moniteur_lignes_brutes),
+            })
+            if self.session.moniteur_erreur:
+                self._statut(
+                    f"Moniteur arrêté — erreur : {self.session.moniteur_erreur}")
+            elif self.session.moniteur_nb_trames == 0:
+                self._statut(
+                    "Moniteur arrêté — aucune trame enregistrée. "
+                    "Le bilan dans le journal de session montre ce que "
+                    "l'adaptateur a envoyé.")
+            else:
+                self._statut(
+                    f"Moniteur arrêté — {self.session.moniteur_nb_trames} "
+                    "trames dans la capture.")
             return
         if not self._exiger_connexion():
             return

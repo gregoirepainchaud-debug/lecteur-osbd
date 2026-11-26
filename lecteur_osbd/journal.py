@@ -28,6 +28,7 @@ class JournalSession:
         self._racine: dict | None = None
         self._evenements: list[dict] = []
         self._debut_ms: float = 0.0
+        self._fichier_continu: Path | None = None
 
     def demarrer(self) -> None:
         self._debut_ms = time.time() * 1000
@@ -60,6 +61,26 @@ class JournalSession:
             "type": type_evt,
             "details": details or {},
         })
+        self._ecrire_continu()
+
+    def definir_fichier(self, dossier_sessions: Path) -> Path:
+        """Écriture continue (build 2) : dès que le dossier du véhicule
+        est connu, le journal est réécrit sur disque à CHAQUE événement.
+        Le build 1 ne l'écrivait qu'à la déconnexion — une fin brutale
+        (laptop fermé, app tuée) perdait toute la session."""
+        dossier_sessions.mkdir(parents=True, exist_ok=True)
+        nom = f"session-{_horodatage_fichier(datetime.fromtimestamp(self._debut_ms / 1000).astimezone())}.json"
+        self._fichier_continu = dossier_sessions / nom
+        self._ecrire_continu()
+        return self._fichier_continu
+
+    def _ecrire_continu(self) -> None:
+        if self._fichier_continu is None or self._racine is None:
+            return
+        try:
+            self._fichier_continu.write_text(self.texte_json(), encoding="utf-8")
+        except Exception:
+            pass
 
     def texte_json(self) -> str:
         if self._racine is None:
