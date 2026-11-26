@@ -364,3 +364,60 @@ class TestBuild2Registre(unittest.TestCase):
             r.ajouter(registry.Vehicule(nom="Auto", vin="VIN2"))
             self.assertEqual(registry.fusionner_doublons(r), 0)
             self.assertEqual(len(r.vehicules), 2)
+
+
+class TestBuild3(unittest.TestCase):
+    def test_bascule_maj(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "LecteurOSBD.exe"
+            exe.write_bytes(b"ANCIEN")
+            nouveau = maj.chemin_nouveau(exe)
+            nouveau.write_bytes(b"NOUVEAU")
+            cible = maj.preparer_bascule(exe, nouveau)
+            self.assertEqual(cible, exe)
+            self.assertEqual(exe.read_bytes(), b"NOUVEAU")
+            self.assertEqual(exe.with_suffix(".old").read_bytes(), b"ANCIEN")
+            self.assertFalse(nouveau.exists())
+            maj.nettoyer_restes(exe)
+            self.assertFalse(exe.with_suffix(".old").exists())
+            self.assertEqual(exe.read_bytes(), b"NOUVEAU")
+
+    def test_journal_un_seul_fichier(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dossier = Path(tmp) / "sessions"
+            j = JournalSession()
+            j.demarrer()
+            continu = j.definir_fichier(dossier)
+            j.evenement("recensement", {"modules": []})
+            final = j.enregistrer(dossier)
+            self.assertEqual(final, continu)
+            fichiers = list(dossier.glob("session-*.json"))
+            self.assertEqual(len(fichiers), 1)
+
+    def test_modes_par_reponse_pas_de_faux_code_a_la_couture(self):
+        # Deux modules répondent « 43 00 » (aucun code) : fusionnés,
+        # leurs octets fabriquaient P0043 ; décodés séparément : rien.
+        from lecteur_osbd.session import SessionObd
+        from lecteur_osbd.journal import JournalSession as JS
+        s = SessionObd(JS())
+        s.dernier_recensement = []
+        reponses = {"03": ["43 00", "43 00"], "07": ["47 00"],
+                    "0A": ["4A 00"]}
+        s.commande = lambda cmd, delai=5.0: reponses.get(cmd, [])
+        s._retour_mode_obd = lambda: None
+        # dernier_recensement vide -> recensement() serait appelé ;
+        # on le neutralise aussi.
+        s.recensement = lambda: []
+        codes = s.lire_codes()
+        self.assertEqual(codes, [])
+
+    def test_modes_par_reponse_vrai_code(self):
+        from lecteur_osbd.session import SessionObd
+        from lecteur_osbd.journal import JournalSession as JS
+        s = SessionObd(JS())
+        reponses = {"03": ["43 01 16 00 00"], "07": [], "0A": []}
+        s.commande = lambda cmd, delai=5.0: reponses.get(cmd, [])
+        s._retour_mode_obd = lambda: None
+        s.recensement = lambda: []
+        codes = s.lire_codes()
+        self.assertEqual([c.code for c in codes], ["P0116"])

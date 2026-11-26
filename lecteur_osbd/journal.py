@@ -90,6 +90,13 @@ class JournalSession:
         return json.dumps(copie, ensure_ascii=False, indent=2)
 
     def enregistrer(self, dossier_sessions: Path) -> Path:
+        # Si l'écriture continue est active, on finalise LE fichier de
+        # la session — pas un second fichier sous un autre nom (doublon
+        # vu le 2026-11-26 : session-<début>.json + session-<fin>.json
+        # au contenu identique).
+        if self._fichier_continu is not None:
+            self._ecrire_continu()
+            return self._fichier_continu
         dossier_sessions.mkdir(parents=True, exist_ok=True)
         fichier = dossier_sessions / f"session-{_horodatage_fichier(datetime.now())}.json"
         fichier.write_text(self.texte_json(), encoding="utf-8")

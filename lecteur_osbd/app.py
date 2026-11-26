@@ -48,6 +48,8 @@ class Application(tk.Tk):
         self.racine_donnees = registry.dossier_donnees()
         self.registre = registry.Registre.charger(self.racine_donnees)
         registry.fusionner_doublons(self.registre)
+        if maj.est_fige():
+            maj.nettoyer_restes(maj.chemin_exe_courant())
         self.journal = JournalSession()
         self.session = SessionObd(self.journal)
         self.vehicule_courant: registry.Vehicule | None = None
@@ -870,6 +872,40 @@ class Application(tk.Tk):
             exe = release["exe"]
             if exe is None:
                 webbrowser.open(release["page"])
+                return
+            if maj.est_fige():
+                # Bascule en place : téléchargement en « .new » à côté
+                # de l'exe courant, renommages, relance (build 3).
+                exe_courant = maj.chemin_exe_courant()
+                destination = maj.chemin_nouveau(exe_courant)
+                self._statut(f"Téléchargement de {exe['nom']}…")
+
+                def travail_bascule():
+                    maj.telecharger(exe["url"], destination)
+                    return destination
+
+                def succes_bascule(chemin):
+                    if not messagebox.askyesno(
+                            buildinfo.APP_NAME,
+                            f"Build {release['numero']} téléchargé.\n\n"
+                            "Redémarrer Lecteur OSBD maintenant pour "
+                            "terminer la mise à jour ?"):
+                        self._statut(
+                            "Mise à jour téléchargée ; elle s'appliquera "
+                            "au prochain appui sur « Mettre à jour l'app ».")
+                        return
+                    try:
+                        cible = maj.preparer_bascule(exe_courant, chemin)
+                    except OSError as exc:
+                        messagebox.showerror(
+                            buildinfo.APP_NAME,
+                            f"La bascule a échoué : {exc}\n\n"
+                            "L'app continue sur la version actuelle.")
+                        return
+                    maj.relancer(cible)
+                    self._fermer()
+
+                self._en_arriere_plan(travail_bascule, succes_bascule)
                 return
             destination = Path.home() / "Downloads" / exe["nom"]
             self._statut(f"Téléchargement de {exe['nom']}…")

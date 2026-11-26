@@ -285,7 +285,12 @@ class SessionObd:
     def _retour_mode_obd(self) -> None:
         with self._verrou:
             self._commande_interne("ATSH7DF")
-            self._commande_interne("ATCRA000")
+            # « Tout accepter » = masque de filtre à zéro. ATCRA 000, que
+            # le build 1 utilisait ici, règle au contraire le filtre sur
+            # la SEULE adresse 0x000 — c'est lui qui étranglait le
+            # moniteur CAN (silence total en écoute passive, prouvé par
+            # le journal du 2026-11-26, lignes brutes = 0).
+            self._commande_interne("ATCM00000000")
             self._commande_interne("ATSP0")
             self._en_tete_courante = -1
 
@@ -340,8 +345,17 @@ class SessionObd:
                               ("07", "Moteur (en attente)"),
                               ("0A", "Moteur (permanents)")):
             try:
-                octets = self._commande_octets(mode, 6.0)
-                codes.extend(dtc_mod.analyser_reponse_mode(octets, origine))
+                lignes = self.commande(mode, 6.0)
+                self.journal.evenement("reponse_mode_brute",
+                                       {"mode": mode, "lignes": lignes})
+                # Décodage RÉPONSE PAR RÉPONSE : la demande part en
+                # diffusion et plusieurs modules répondent ; fusionner
+                # leurs octets avant de découper en paires fabriquait de
+                # faux codes à la couture (P0043/P0047/P004A, terrain du
+                # 2026-11-26).
+                for ligne in lignes:
+                    codes.extend(dtc_mod.analyser_reponse_mode(
+                        octets_depuis_lignes([ligne]), origine))
             except Exception:
                 pass
         modules = self.dernier_recensement or self.recensement()
@@ -478,6 +492,12 @@ class SessionObd:
                     can_id = next(iter(filtres))
                     self._commande_interne(f"ATCF{can_id:03X}")
                     self._commande_interne("ATCM000007FF")
+                else:
+                    # Écoute large : filtre matériel GRAND OUVERT
+                    # (masque zéro = tout passe), quel que soit l'état
+                    # laissé par les opérations précédentes.
+                    self._commande_interne("ATCF00000000")
+                    self._commande_interne("ATCM00000000")
                 chemin_capture.parent.mkdir(parents=True, exist_ok=True)
                 fichier = open(chemin_capture, "w", encoding="utf-8", newline="")
                 self._fichier_capture = fichier
