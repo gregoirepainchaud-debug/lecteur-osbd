@@ -1,0 +1,68 @@
+351 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.10
+351 INFO: Python: 3.12.10
+373 INFO: Platform: Windows-2025Server-10.0.26100-SP0
+373 INFO: Python environment: C:\hostedtoolcache\windows\Python\3.12.10\x64
+375 INFO: wrote D:\a\lecteur-osbd\lecteur-osbd\LecteurOSBD.spec
+385 INFO: Module search paths (PYTHONPATH):
+['C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Scripts\\pyinstaller.exe',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python312.zip',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\DLLs',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64',
+ 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages',
+ 'D:\\a\\lecteur-osbd\\lecteur-osbd']
+585 INFO: checking Analysis
+586 INFO: Building Analysis because Analysis-00.toc is non existent
+586 INFO: Looking for Python shared library...
+586 INFO: Using Python shared library: C:\hostedtoolcache\windows\Python\3.12.10\x64\python312.dll
+586 INFO: Running Analysis Analysis-00.toc
+586 INFO: Target bytecode optimization level: 0
+586 INFO: Initializing module dependency graph...
+628 INFO: Initializing module graph hook caches...
+640 INFO: Analyzing modules for base_library.zip ...
+1559 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+2012 INFO: Processing standard module hook 'hook-math.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+3066 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+3860 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+4424 INFO: Caching module dependency graph...
+4451 INFO: Analyzing D:\a\lecteur-osbd\lecteur-osbd\LecteurOSBD.py
+4514 INFO: Processing standard module hook 'hook-webbrowser.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+4527 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+4528 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+5428 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+5831 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+5920 INFO: Processing module hooks (post-graph stage)...
+5922 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks'
+5930 INFO: Performing binary vs. data reclassification (927 entries)
+6494 INFO: Looking for ctypes DLLs
+6508 WARNING: Ignoring /System/Library/Frameworks/IOKit.framework/IOKit imported from C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages\serial\tools\list_ports_osx.py - only basenames are supported with ctypes imports!
+6508 WARNING: Ignoring /System/Library/Frameworks/CoreFoundation.framework/CoreFoundation imported from C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages\serial\tools\list_ports_osx.py - only basenames are supported with ctypes imports!
+6512 INFO: Analyzing run-time hooks ...
+6514 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+6517 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+6538 INFO: Creating base_library.zip...
+6554 INFO: Looking for dynamic libraries
+6663 INFO: Extra DLL search directories (AddDllDirectory): []
+6663 INFO: Extra DLL search directories (PATH): []
+7337 INFO: Warnings written to D:\a\lecteur-osbd\lecteur-osbd\build\LecteurOSBD\warn-LecteurOSBD.txt
+7351 INFO: Graph cross-reference written to D:\a\lecteur-osbd\lecteur-osbd\build\LecteurOSBD\xref-LecteurOSBD.html
+7375 INFO: checking PYZ
+7375 INFO: Building PYZ because PYZ-00.toc is non existent
+7375 INFO: Building PYZ (ZlibArchive) D:\a\lecteur-osbd\lecteur-osbd\build\LecteurOSBD\PYZ-00.pyz
+7548 INFO: Building PYZ (ZlibArchive) D:\a\lecteur-osbd\lecteur-osbd\build\LecteurOSBD\PYZ-00.pyz completed successfully.
+7574 INFO: checking PKG
+7574 INFO: Building PKG because PKG-00.toc is non existent
+7574 INFO: Building PKG (CArchive) LecteurOSBD.pkg
+11107 INFO: Building PKG (CArchive) LecteurOSBD.pkg completed successfully.
+11123 INFO: Bootloader C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+11123 INFO: checking EXE
+11123 INFO: Building EXE because EXE-00.toc is non existent
+11123 INFO: Building EXE from EXE-00.toc
+11123 INFO: Copying bootloader EXE to D:\a\lecteur-osbd\lecteur-osbd\dist\LecteurOSBD.exe
+11125 INFO: Copying icon to EXE
+11127 INFO: Copying 0 resources to EXE
+11127 INFO: Embedding manifest in EXE
+11127 INFO: Appending PKG archive to EXE
+11133 INFO: Fixing EXE headers
+11208 INFO: Building EXE from EXE-00.toc completed successfully.
+11222 INFO: Build complete! The results are available in: D:\a\lecteur-osbd\lecteur-osbd\dist
