@@ -1,0 +1,101 @@
+name: Build Windows
+
+# Muse pousse le code → les tests roulent (Linux) → l'exe Windows
+# est compilé (PyInstaller) → une Release GitHub « build-N » est
+# publiée avec LecteurOSBD.exe → le journal (et les erreurs) est
+# rangé sur la branche ci-logs, lisible par Muse via raw/API.
+# Le tampon de build (lecteur_osbd/buildinfo.py) doit égaler le
+# nombre de commits sur main : le compteur ne monte que pour un
+# build vert — si la CI est rouge, on réécrit le même commit.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Vérifier le tampon de build (N = nombre de commits sur main)
+        run: |
+          N=$(grep -oP 'BUILD_NUMBER = \K[0-9]+' lecteur_osbd/buildinfo.py)
+          C=$(git rev-list --count HEAD)
+          echo "BUILD_NUMBER=$N, commits sur main=$C"
+          if [ "$N" != "$C" ]; then
+            echo "::error::Tampon de build incohérent : BUILD_NUMBER=$N mais $C commits sur main."
+            exit 1
+          fi
+
+      - name: Tests unitaires (couches pures)
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee tests.log
+
+  build-windows:
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dépendances
+        run: pip install pyserial pyinstaller
+
+      - name: Construire LecteurOSBD.exe (PyInstaller, un seul fichier)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          pyinstaller --onefile --windowed --name LecteurOSBD LecteurOSBD.py *>&1 | Tee-Object -FilePath build.log
+          if (-not (Test-Path "dist/LecteurOSBD.exe")) {
+            Write-Error "dist/LecteurOSBD.exe introuvable après PyInstaller"
+            exit 1
+          }
+          Get-Item dist/LecteurOSBD.exe | Format-List Name, Length
+
+      - name: Publier la Release GitHub (tag build-N)
+        if: success()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $n = (Select-String -Path lecteur_osbd/buildinfo.py -Pattern 'BUILD_NUMBER = (\d+)').Matches[0].Groups[1].Value
+          $tag = "build-$n"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag dist/LecteurOSBD.exe --clobber
+          } else {
+            gh release create $tag dist/LecteurOSBD.exe --title "Lecteur OSBD build $n" --notes "Build $n — voir le tampon dans l'app. Télécharge LecteurOSBD.exe et lance-le (aucune installation)."
+          }
+
+      - name: Publier le journal sur la branche ci-logs
+        if: always()
+        shell: bash
+        run: |
+          grep -n -i "error" build.log > errors.txt || true
+          tail -n 800 build.log > build-tail.log || true
+          for f in errors.txt build-tail.log; do
+            b64=$(base64 < "$f" | tr -d '\n')
+            name="errors-${{ github.run_id }}.txt"
+            [ "$f" = "errors.txt" ] || name="build-tail-${{ github.run_id }}.log"
+            curl -s -X PUT \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${{ github.repository }}/contents/$name \
+              -d "{\"message\":\"CI $f run ${{ github.run_id }}\",\"content\":\"$b64\",\"branch\":\"ci-logs\"}" \
+              > /dev/null || true
+          done

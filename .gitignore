@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+build.log
+tests.log
+errors.txt
+build-tail.log
