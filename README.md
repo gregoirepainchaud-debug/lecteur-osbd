@@ -136,3 +136,30 @@ le projet Android : l'humain capture, l'IA lit).
 - Détection STN à la connexion (commande STI) ; le moniteur
   utilise STMA sur les puces ScanTool (filtre matériel ouvert,
   manuel FRPM OBDLink §11.2), ATMA sinon.
+
+## Build 5 (2026-11-26) — le VDC est trouvé, en UDS à 0x7B0
+
+- Percée terrain : la sonde fonctionnelle du build 4 (19 02 FF à
+  0x7DF) a fait répondre six modules — dont le VDC à l'adresse
+  physique UDS **0x7B0** (réponse 0x7B8), hors de la plage
+  0x7E0–0x7E7 du recensement classique. Ses codes confirmés :
+  C1954 (actionneur EPB droit), C1955 (actionneur EPB gauche),
+  C1984 (mode maintenance des freins actif). L'init SSM-sur-CAN
+  est muette partout sur cette génération, témoins inclus : la
+  voie SSM est fermée, la voie UDS propriétaire est la bonne.
+- `decouverte.py` : analyse des lignes fonctionnelles (réassemblage
+  ISO-TP par ID de réponse, NRC 0x78 traversé), cartographie des
+  modules mémorisée par véhicule (onglet Véhicule), identité DID
+  (F187/F189/F190) de chaque module découvert — 0x7C4 identifié
+  comme la climatisation par son code B14A1 (capteur
+  d'ensoleillement, faux positif classique à l'ombre).
+- Onglet Freins / VDC branché sur 0x7B0 : identité et codes du
+  module (descriptions VDC/EPB Subaru ajoutées à la base),
+  **effacement de ses codes** (0x14, rapport archivé avant,
+  relecture après — procédure d'atelier C1984 : effacer, appliquer
+  le frein de stationnement plusieurs fois, relire), et sondes
+  d'accès en observation (session étendue 10 03, graine
+  SecurityAccess 27 01 — aucune clé n'est calculée ni envoyée).
+- Toujours aucune commande d'actionneur : la routine de sortie
+  du mode maintenance n'est publiée nulle part (recherche du
+  2026-11-26) — elle ne sera pas devinée.

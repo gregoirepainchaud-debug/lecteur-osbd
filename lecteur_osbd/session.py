@@ -76,6 +76,7 @@ class SessionObd:
         self.etat_can = EtatCan()
         self._etat_can_maj_ms = 0.0
         self.dernier_recensement: list[InfoModule] = []
+        self.derniere_decouverte: list = []
         self.derniers_codes: list[CodeDefaut] = []
         self._en_tete_courante = -1
         self._arret_moniteur = False

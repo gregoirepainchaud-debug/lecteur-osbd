@@ -138,11 +138,42 @@ SPECIFIQUES = {
     "C1531": "VDC — le module juge une anomalie quand une légère pression sur la pédale persiste après le relâchement du frein de stationnement électronique (bulletin Subaru 06-77-20R)",
     "C1741": "VDC — variante du C1531 : pression légère sur la pédale sans allumer les feux stop, jugée anomalie par le module (bulletin Subaru 06-77-20R)",
 
+    # --- Châssis Subaru VDC / EPB (manuel d'atelier, famille Legacy
+    # BN/BS — même VDCCM avec EPB intégré ; ajoutés au build 5 après
+    # la lecture réelle du VDC du Forester SK, 2026-11-26) ---
+    "C1211": "Capteur de vitesse de roue ABS avant droit — circuit (ouvert ou signal élevé)",
+    "C1212": "Capteur de vitesse de roue ABS avant droit — signal",
+    "C1221": "Capteur de vitesse de roue ABS avant gauche — circuit (ouvert ou signal élevé)",
+    "C1222": "Capteur de vitesse de roue ABS avant gauche — signal",
+    "C1231": "Capteur de vitesse de roue ABS arrière droit — circuit (ouvert ou signal élevé)",
+    "C1232": "Capteur de vitesse de roue ABS arrière droit — signal",
+    "C1241": "Capteur de vitesse de roue ABS arrière gauche — circuit (ouvert ou signal élevé)",
+    "C1242": "Capteur de vitesse de roue ABS arrière gauche — signal",
+    "C1412": "Module VDC — échec du paramètre sélectionné",
+    "C1413": "Module VDC — tension d'alimentation anormale",
+    "C1422": "VDC interrompu pour une raison liée au moteur",
+    "C1423": "Module VDC — spécification différente de celle attendue",
+    "C1921": "Interrupteur de position du frein de stationnement — circuit",
+    "C1922": "Interrupteur d'aide au démarrage en côte (hill hold) — circuit",
+    "C1942": "Frein de stationnement électronique — tension d'alimentation anormale",
+    "C1951": "Actionneurs du frein de stationnement électronique — ligne défaillante",
+    "C1954": "Actionneur du frein de stationnement électronique, côté DROIT — coincement mécanique ou fonctionnement anormal de l'étrier arrière droit détecté",
+    "C1955": "Actionneur du frein de stationnement électronique, côté GAUCHE — coincement mécanique ou fonctionnement anormal de l'étrier arrière gauche détecté",
+    "C1956": "Actionneur du frein de stationnement électronique, côté droit — circuit",
+    "C1957": "Actionneur du frein de stationnement électronique, côté gauche — circuit",
+    "C1983": "Frein de stationnement électronique — fréquence d'opération trop élevée",
+    "C1984": "Mode maintenance des freins EN COURS — enregistré tant que le mode n'est pas terminé ; le frein de stationnement ne fonctionne pas dans cet état",
+    "C1985": "État interdit d'opération dynamique de l'actionneur du frein de stationnement électronique",
+
+    # --- Carrosserie Subaru documentés (manuel d'atelier) ---
+    "B14A1": "Capteur d'ensoleillement (climatisation) — circuit faible ou ouvert ; souvent un faux positif à l'ombre ou en intérieur, le manuel demande de vérifier en plein soleil",
+
     # --- Réseau (U0xxx normalisés fréquents) ---
     "U0100": "Perte de communication avec le module moteur (ECM)",
     "U0101": "Perte de communication avec le module de transmission (TCM)",
     "U0121": "Perte de communication avec le module ABS",
     "U0126": "Perte de communication avec le capteur d'angle de direction",
+    "U0140": "Perte de communication avec le module de carrosserie (BCM/BIU)",
     "U0155": "Perte de communication avec le tableau de bord",
     "U0401": "Données invalides reçues du module moteur",
     "U0415": "Données invalides reçues du module ABS",

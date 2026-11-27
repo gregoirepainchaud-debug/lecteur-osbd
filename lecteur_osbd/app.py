@@ -5,10 +5,10 @@ tension — et le bouton « Mettre à jour l'app » (règle de Grégoire :
 visible, jamais enfoui dans un menu).
 
 Onglets : Véhicule · Codes · Données en direct · Moniteur CAN ·
-Freins / VDC (lecture seule) · Historique · Avancé (console UDS).
+Freins / VDC · Historique · Avancé (console UDS).
 
 Aucune commande EPB, aucune écriture autre que l'effacement de
-codes archivé au préalable.
+codes archivé au préalable (étendu au VDC, 0x7B0, au build 5).
 """
 import queue
 import threading
@@ -20,26 +20,33 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import buildinfo, maj, pids as pids_mod, registry, ssm as ssm_mod
+from . import (buildinfo, decouverte as decouverte_mod, maj,
+               pids as pids_mod, registry, ssm as ssm_mod)
+from .dtc import est_reel
 from .hexutil import est_hex, vers_octets, vers_texte
 from .journal import JournalSession
 from .session import SessionObd, lister_ports
 
 TEXTE_FREINS = (
-    "FREINS / VDC — LECTURE SEULE\n\n"
+    "FREINS / VDC — LE MODULE EST TROUVÉ (build 5)\n\n"
     "Sur le Forester, le frein de stationnement électrique (EPB) est "
     "piloté par le module VDC — le même qui gère l'ABS et "
-    "l'antipatinage. Aucune commande d'actionneur dans ce build : "
-    "on lit, on ne commande pas.\n\n"
-    "Le VDC d'un Subaru ne parle pas UDS : sa voie est le SSM "
-    "(protocole constructeur, encapsulé dans ISO-TP), adresse CAN "
-    "présumée 0x7E2. Le bouton « Rechercher les modules SSM » fait "
-    "l'init SSM (AA) aux adresses 7E0–7E4 — 7E0/7E1 sont les témoins "
-    "connus — plus un filet de sondes UDS directes au cas où.\n\n"
+    "l'antipatinage. Percée du 2026-11-26 : le VDC répond en UDS "
+    "standard à l'adresse physique 0x7B0. Il a été découvert par la "
+    "sonde fonctionnelle (onglet Véhicule → « Cartographier les "
+    "modules ») parce qu'il vit hors de la plage 0x7E0–0x7E7 du "
+    "recensement classique ; l'init SSM, elle, est muette partout "
+    "sur cette génération.\n\n"
+    "Boutons VDC ci-dessous : identité et codes du module, "
+    "effacement de ses codes (archivé au préalable — la procédure "
+    "d'atelier pour C1984 dit : effacer, appliquer le frein de "
+    "stationnement plusieurs fois, relire), et sondes d'accès en "
+    "observation seule (aucune clé de sécurité n'est envoyée).\n\n"
+    "AUCUNE commande d'actionneur : la sortie du mode maintenance "
+    "reste une fonction d'outil d'usine dont la séquence n'est "
+    "publiée nulle part — on ne la devine pas.\n\n"
     "Sur le Sprinter, le frein de stationnement est mécanique "
-    "(levier) ; le module ESP reste lisible en diagnostic.\n\n"
-    "Vitesses de roue en direct : démarre le moniteur CAN (trame "
-    "0x13A, véhicules Subaru) ou les données en direct pour les comparer."
+    "(levier) ; le module ESP reste lisible en diagnostic."
 )
 
 
@@ -144,8 +151,12 @@ class Application(tk.Tk):
     def _onglet_vehicule(self) -> None:
         onglet = ttk.Frame(self.onglets)
         self.onglets.add(onglet, text="Véhicule")
-        ttk.Button(onglet, text="Recenser les modules (UDS)",
-                   command=self._recenser).pack(anchor="w", padx=8, pady=8)
+        boutons = ttk.Frame(onglet, padding=8)
+        boutons.pack(anchor="w")
+        ttk.Button(boutons, text="Recenser les modules (UDS)",
+                   command=self._recenser).pack(side=tk.LEFT)
+        ttk.Button(boutons, text="Cartographier les modules (découverte fonctionnelle)",
+                   command=self._cartographier).pack(side=tk.LEFT, padx=8)
         self.texte_vehicule = self._zone_texte(onglet)
 
     def _onglet_codes(self) -> None:
@@ -199,6 +210,14 @@ class Application(tk.Tk):
         self.onglets.add(onglet, text="Freins / VDC")
         ttk.Label(onglet, text=TEXTE_FREINS, wraplength=900, justify=tk.LEFT,
                   padding=8).pack(anchor="w")
+        vdc = ttk.Frame(onglet)
+        vdc.pack(anchor="w", padx=8, pady=(0, 4))
+        ttk.Button(vdc, text="Lire le module VDC (0x7B0)",
+                   command=self._lire_vdc).pack(side=tk.LEFT)
+        ttk.Button(vdc, text="Effacer les codes du VDC…",
+                   command=self._effacer_vdc).pack(side=tk.LEFT, padx=6)
+        ttk.Button(vdc, text="Sonder les accès du VDC",
+                   command=self._sonder_vdc).pack(side=tk.LEFT)
         boutons = ttk.Frame(onglet)
         boutons.pack(anchor="w", padx=8)
         ttk.Button(boutons, text="Lire l'état freins / VDC",
@@ -504,6 +523,31 @@ class Application(tk.Tk):
 
         self._en_arriere_plan(travail, succes)
 
+    def _cartographier(self) -> None:
+        if not self._exiger_connexion():
+            return
+        self._statut("Cartographie des modules (sonde fonctionnelle 19 02 FF)…")
+
+        def travail():
+            return decouverte_mod.decouvrir(self.session)
+
+        def succes(modules):
+            lignes = ["CARTE DES MODULES — découverte fonctionnelle "
+                      "(appel 19 02 FF à 0x7DF, identité DID lue ensuite)", ""]
+            if not modules:
+                lignes.append("Aucun module n'a répondu à la sonde fonctionnelle.")
+            lignes += [m.ligne_affichage() for m in modules]
+            self._remplir(self.texte_vehicule, "\n".join(lignes))
+            if self.session_historique is not None:
+                connus = set(self.session_historique.get("modules", []))
+                connus |= {m.requete_hex for m in modules}
+                self.session_historique["modules"] = sorted(connus)
+                self._sauvegarder_session_historique()
+            self._statut(
+                f"Cartographie terminée — {len(modules)} module(s) découvert(s).")
+
+        self._en_arriere_plan(travail, succes)
+
     # --- Codes -----------------------------------------------------------------
 
     def _lire_codes(self) -> None:
@@ -720,6 +764,185 @@ class Application(tk.Tk):
         self.after(500, self._traiter_file_moniteur)
 
     # --- Freins / VDC ------------------------------------------------------------------
+
+    def _fusionner_codes_historique(self, codes) -> None:
+        """Ajoute des codes vus cette session à l'historique du
+        véhicule (la chronologie par code s'en nourrit)."""
+        if self.session_historique is not None and codes:
+            connus = set(self.session_historique.get("codes", []))
+            connus |= {c.code for c in codes}
+            self.session_historique["codes"] = sorted(connus)
+            self._sauvegarder_session_historique()
+
+    def _lire_vdc(self) -> None:
+        if not self._exiger_connexion():
+            return
+        self._statut("Lecture du module VDC (0x7B0)…")
+
+        def travail():
+            identite = decouverte_mod.lire_identite(
+                self.session, decouverte_mod.ADRESSE_VDC)
+            resultat, codes = decouverte_mod.lire_codes_module(
+                self.session, decouverte_mod.ADRESSE_VDC)
+            return identite, resultat, codes
+
+        def succes(retour):
+            identite, resultat, codes = retour
+            adresse = decouverte_mod.ADRESSE_VDC
+            lignes = [f"MODULE VDC / ABS — adresse UDS 0x{adresse:03X}", "",
+                      f"Numéro de pièce (DID F187) : {identite['piece'] or '—'}",
+                      f"Version logicielle (DID F189) : {identite['logiciel'] or '—'}",
+                      f"VIN lu par le module (DID F190) : {identite['vin'] or '—'}",
+                      ""]
+            if resultat.classe == "refus":
+                lignes.append(
+                    f"Lecture des codes REFUSÉE — NRC 0x{resultat.nrc:02X} "
+                    f"({resultat.description_nrc})")
+            elif resultat.classe != "positive":
+                lignes.append(
+                    "Le module n'a pas répondu à la lecture des codes "
+                    "(silence ou erreur de l'adaptateur).")
+            else:
+                reels = [c for c in codes if est_reel(c.statut)]
+                lignes.append(f"CODES DU VDC ({len(reels)} réel(s))")
+                if not reels:
+                    lignes.append("Aucun code réel au VDC.")
+                lignes += [f"{c.ligne_affichage()}  [{c.origine}]" for c in reels]
+                dictionnaire = len(codes) - len(reels)
+                if dictionnaire:
+                    lignes.append(
+                        f"({dictionnaire} enregistrement(s) du dictionnaire "
+                        "du module, sans panne — ignorés)")
+                self._fusionner_codes_historique(reels)
+            self._remplir(self.texte_freins, "\n".join(lignes))
+            self._statut("Module VDC lu.")
+
+        self._en_arriere_plan(travail, succes)
+
+    def _effacer_vdc(self) -> None:
+        if not self._exiger_connexion():
+            return
+        if self.session.moniteur_actif:
+            messagebox.showwarning(buildinfo.APP_NAME,
+                                   "Arrête le moniteur CAN avant d'effacer.")
+            return
+        if not self._vin_correspond():
+            messagebox.showerror(
+                buildinfo.APP_NAME,
+                "EFFACEMENT BLOQUÉ — le VIN lu "
+                f"({self.vin_lu}) ne correspond pas au véhicule "
+                f"sélectionné ({self.vehicule_courant.libelle()}, "
+                f"VIN {self.vehicule_courant.vin}).\n\n"
+                "Sélectionne le bon véhicule ou corrige sa fiche.")
+            self.journal.evenement("effacement_bloque",
+                                   {"motif": "vin_different", "module": "7B0"})
+            return
+        if not messagebox.askyesno(
+                buildinfo.APP_NAME,
+                "Effacer les codes du module VDC (0x7B0) ?\n\n"
+                "Les codes présents seront lus et archivés dans un "
+                "rapport AVANT l'effacement, puis relus après.\n\n"
+                "Procédure d'atelier Subaru pour C1984 : effacer, "
+                "appliquer le frein de stationnement plusieurs fois "
+                "(pédale de frein appuyée fermement), relire."):
+            return
+        self._statut("Vérification d'immobilité, archivage, effacement au VDC…")
+
+        def travail():
+            if not self.session.verifier_immobile():
+                raise IOError("Véhicule en mouvement (≥ 0,5 km/h) — effacement refusé.")
+            adresse = decouverte_mod.ADRESSE_VDC
+            identite = decouverte_mod.lire_identite(self.session, adresse)
+            _r_avant, codes_avant = decouverte_mod.lire_codes_module(
+                self.session, adresse)
+            reels_avant = [c for c in codes_avant if est_reel(c.statut)]
+            lignes_rapport = [
+                f"MODULE VDC — adresse UDS 0x{adresse:03X}",
+                f"Numéro de pièce (F187) : {identite['piece'] or '—'}",
+                f"Version logicielle (F189) : {identite['logiciel'] or '—'}",
+                f"VIN lu par le module (F190) : {identite['vin'] or '—'}",
+                "",
+                f"CODES RÉELS AVANT EFFACEMENT ({len(reels_avant)})",
+            ]
+            lignes_rapport += [f"{c.ligne_affichage()}  [{c.origine}]"
+                               for c in reels_avant]
+            fichier = self.journal.archiver_rapport(
+                self._dossier_courant() / "rapports", "\n".join(lignes_rapport),
+                "avant effacement des codes du VDC")
+            resultat = decouverte_mod.effacer_codes_module(self.session, adresse)
+            _r_apres, codes_apres = decouverte_mod.lire_codes_module(
+                self.session, adresse)
+            reels_apres = [c for c in codes_apres if est_reel(c.statut)]
+            return fichier, resultat, reels_avant, reels_apres
+
+        def succes(retour):
+            fichier, resultat, reels_avant, reels_apres = retour
+            lignes = [f"Rapport archivé : {fichier}", "",
+                      "EFFACEMENT AU VDC (UDS 0x14)"]
+            if resultat.classe == "positive":
+                lignes.append("Commande acceptée par le module.")
+            elif resultat.classe == "refus":
+                lignes.append(f"REFUS — NRC 0x{resultat.nrc:02X} "
+                              f"({resultat.description_nrc})")
+            elif resultat.classe == "erreur_adaptateur":
+                lignes.append(f"Erreur adaptateur — {resultat.message}")
+            else:
+                lignes.append("Silence du module.")
+            lignes += ["", f"CODES RÉELS APRÈS EFFACEMENT ({len(reels_apres)})"]
+            if not reels_apres:
+                lignes.append("Aucun — le module est propre à la relecture.")
+            lignes += [f"{c.ligne_affichage()}  [{c.origine}]" for c in reels_apres]
+            lignes += ["",
+                       "ÉTAPE SUIVANTE (procédure d'atelier) : applique le "
+                       "frein de stationnement plusieurs fois, pédale de "
+                       "frein appuyée fermement, puis relis le module. "
+                       "Ce qui revient est une faute encore vivante ; "
+                       "ce qui ne revient pas était un constat figé."]
+            self._remplir(self.texte_freins, "\n".join(lignes))
+            self._fusionner_codes_historique(reels_avant + reels_apres)
+            if self.session_historique is not None:
+                self.session_historique.setdefault("actions", []).append(
+                    "effacement VDC")
+                self._sauvegarder_session_historique()
+            self._statut("Effacement au VDC terminé (rapport archivé avant).")
+
+        self._en_arriere_plan(travail, succes)
+
+    def _sonder_vdc(self) -> None:
+        if not self._exiger_connexion():
+            return
+        self._statut("Sondes d'accès au VDC (observation seule)…")
+
+        def travail():
+            return decouverte_mod.sondes_acces(
+                self.session, decouverte_mod.ADRESSE_VDC)
+
+        def succes(sondes):
+            lignes = ["SONDES D'ACCÈS AU VDC — OBSERVATION SEULE",
+                      "On constate l'état des portes ; aucune clé de "
+                      "sécurité n'est calculée ni envoyée, et la session "
+                      "par défaut est rétablie à la fin.", ""]
+            for nom, r in sondes:
+                if r.classe == "positive":
+                    if nom.startswith("Graine"):
+                        graine = r.octets[2:] if len(r.octets) > 2 else b""
+                        detail = (f"graine reçue ({len(graine)} octets) — la "
+                                  "porte SecurityAccess existe ; son "
+                                  "algorithme n'est pas public")
+                    else:
+                        detail = "acceptée"
+                elif r.classe == "refus":
+                    detail = (f"refus — NRC 0x{r.nrc:02X} "
+                              f"({r.description_nrc})")
+                elif r.classe == "erreur_adaptateur":
+                    detail = f"silence du module ({r.message})"
+                else:
+                    detail = "silence du module"
+                lignes.append(f"{nom} : {detail}")
+            self._remplir(self.texte_freins, "\n".join(lignes))
+            self._statut("Sondes d'accès terminées (journalisées).")
+
+        self._en_arriere_plan(travail, succes)
 
     def _lire_freins(self) -> None:
         if not self._exiger_connexion():
