@@ -4,6 +4,7 @@ Lancer : python -m unittest discover -s tests -v
 """
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -421,3 +422,114 @@ class TestBuild3(unittest.TestCase):
         s.recensement = lambda: []
         codes = s.lire_codes()
         self.assertEqual([c.code for c in codes], ["P0116"])
+
+
+class TestBuild6(unittest.TestCase):
+    """Build 6 — terrain du 2026-11-26 au soir : le piège du NRC
+    0x78, le journal qui perdait les NRC, le faux verdict « module
+    propre », et le nettoyage d'installation qui échouait."""
+
+    def test_refus_conserve_octets_et_nrc(self):
+        # Avant le build 6, un refus ne gardait pas ses octets : le
+        # journal affichait une réponse vide pour CHAQUE refus.
+        r = uds.classifier(bytes([0x7F, 0x19, 0x78]), 0x19)
+        self.assertEqual(r.classe, "refus")
+        self.assertEqual(r.nrc, 0x78)
+        self.assertEqual(r.octets, bytes([0x7F, 0x19, 0x78]))
+        r = uds.classifier(bytes([0x7F, 0x22, 0x31]), 0x22)
+        self.assertEqual(r.nrc, 0x31)
+        self.assertEqual(r.octets, bytes([0x7F, 0x22, 0x31]))
+
+    def test_reponse_tardive_reassemblee(self):
+        # La mécanique de l'écoute tardive (session._attendre_reponse_
+        # tardive) : trames brutes filtrées par ID de réponse, un
+        # premier payload 7F 19 78 à TRAVERSER, puis la vraie réponse
+        # ISO-TP multi-trames — ici la capture réelle du VDC.
+        lignes = ["7B8 03 7F 19 78",
+                  "7B8 10 0F 59 02 0A 59 54 00",
+                  "7B8 21 08 59 55 00 0A 59 84",
+                  "7B8 22 00 0A 00 00 00 00 00",
+                  "7E8 03 59 02 0A"]  # un autre module : ignoré
+        reasm = uds.ReassembleurIsotp()
+        definitif = None
+        for ligne in lignes:
+            analyse = canbus.analyser_ligne(ligne)
+            self.assertIsNotNone(analyse)
+            can_id, donnees = analyse
+            if can_id != 0x7B8:
+                continue
+            payload = reasm.nourrir(donnees)
+            if payload is None:
+                continue
+            r = uds.classifier(payload, 0x19)
+            if r.classe == "refus" and r.nrc == 0x78:
+                continue
+            definitif = r
+            break
+        self.assertIsNotNone(definitif)
+        self.assertEqual(definitif.classe, "positive")
+        codes = uds.analyser_dtc(definitif.octets, "Module 7B0")
+        self.assertEqual([c.code for c in codes],
+                         ["C1954", "C1955", "C1984"])
+
+    def test_nettoyage_robuste_reessaie_en_arriere_plan(self):
+        # « L'effacement de l'installation a failed » (Grégoire,
+        # 2026-11-26) : le .old verrouillé au premier essai doit être
+        # réessayé en arrière-plan jusqu'à disparition, en silence.
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "LecteurOSBD.exe"
+            exe.write_bytes(b"NOUVEAU")
+            vieux = exe.with_suffix(".old")
+            vieux.write_bytes(b"ANCIEN")
+            original = Path.unlink
+            appels = {"n": 0}
+
+            def capricieux(cible, *a, **k):
+                if cible == vieux and appels["n"] == 0:
+                    appels["n"] += 1
+                    raise OSError("fichier verrouillé (simulé)")
+                return original(cible, *a, **k)
+
+            Path.unlink = capricieux
+            try:
+                survivants = maj.nettoyer_restes(exe, delais=(0.2, 0.4))
+                self.assertEqual(survivants, [vieux])  # 1er essai raté
+                limite = time.time() + 3.0
+                while vieux.exists() and time.time() < limite:
+                    time.sleep(0.05)
+            finally:
+                Path.unlink = original
+            self.assertFalse(vieux.exists())  # le réessai a fini le travail
+            self.assertEqual(exe.read_bytes(), b"NOUVEAU")
+
+    def test_bascule_avec_vieux_old_impossible_a_supprimer(self):
+        # Un .old d'une bascule encore plus ancienne, impossible à
+        # supprimer (verrouillé), ne doit pas bloquer la mise à
+        # jour : il est écarté sous un nom « .reste-… » que le
+        # nettoyage sait retrouver et finir par supprimer.
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "LecteurOSBD.exe"
+            exe.write_bytes(b"ANCIEN")
+            fige = exe.with_suffix(".old")
+            fige.write_bytes(b"TRES VIEUX")
+            nouveau = maj.chemin_nouveau(exe)
+            nouveau.write_bytes(b"NOUVEAU")
+            original = Path.unlink
+
+            def bloque(cible, *a, **k):
+                if cible == fige:
+                    raise OSError("fichier verrouillé (simulé)")
+                return original(cible, *a, **k)
+
+            Path.unlink = bloque
+            try:
+                cible = maj.preparer_bascule(exe, nouveau)
+            finally:
+                Path.unlink = original
+            self.assertEqual(cible, exe)
+            self.assertEqual(exe.read_bytes(), b"NOUVEAU")
+            self.assertEqual(exe.with_suffix(".old").read_bytes(), b"ANCIEN")
+            restes = maj.nettoyer_restes(exe, delais=())
+            self.assertEqual(restes, [])
+            self.assertFalse(exe.with_suffix(".old").exists())
+            self.assertEqual(list(Path(tmp).glob("*.reste-*")), [])

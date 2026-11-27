@@ -160,11 +160,16 @@ def analyser_lignes_fonctionnelles(lignes: list[str]) -> list[ModuleDecouvert]:
 
 
 def uds_attente(session, adresse: int, requete: bytes, delai_s: float = 4.0,
-                essais: int = 6, pause_s: float = 0.4) -> ResultatUds:
-    """Requête UDS qui traverse les « réponse en attente » (NRC 0x78) :
-    le module demande du temps, on réessaie jusqu'à sa réponse finale
-    ou l'épuisement des essais. Les modules lents (le VDC a répondu
-    après un 0x78 lors de la découverte) sont ainsi lus proprement."""
+                essais: int = 3, pause_s: float = 1.0) -> ResultatUds:
+    """Requête UDS qui traverse les « réponse en attente » (NRC 0x78).
+
+    Depuis le build 6, la traversée principale se fait DANS
+    session.uds() : après un 0x78, l'adaptateur écoute la réponse
+    tardive du module au lieu de renvoyer la commande (renvoyer
+    relançait le travail du VDC indéfiniment — terrain du
+    2026-11-26). Cette boucle ne sert plus que de seconde chance :
+    si l'écoute n'a rien capté, le module a peut-être fini entre
+    temps et une nouvelle demande reçoit sa réponse tout de suite."""
     resultat = session.uds(adresse, requete, delai_s)
     restants = essais
     while (resultat.classe == "refus" and resultat.nrc == 0x78

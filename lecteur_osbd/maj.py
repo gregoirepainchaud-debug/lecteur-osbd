@@ -13,6 +13,8 @@ import json
 import re
 import subprocess
 import sys
+import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -94,6 +96,24 @@ def chemin_nouveau(exe_courant: Path) -> Path:
     return exe_courant.with_suffix(".new")
 
 
+def _supprimer_ou_ecarter(chemin: Path) -> None:
+    """Supprime un fichier, avec petits réessais (l'ancien processus
+    peut le tenir encore quelques instants) ; à défaut, l'écarte sous
+    un nom unique pour libérer le nom d'origine — le nettoyage de
+    démarrage finira le travail. Ne lève que si même l'écartement
+    échoue."""
+    for tentative in range(3):
+        try:
+            chemin.unlink()
+            return
+        except OSError:
+            if tentative < 2:
+                time.sleep(0.3)
+    if chemin.exists():
+        chemin.rename(chemin.with_name(
+            f"{chemin.name}.reste-{int(time.time() * 1000)}"))
+
+
 def preparer_bascule(exe_courant: Path, nouveau: Path) -> Path:
     """Renomme l'exe courant en « .old » et le nouveau téléchargé à sa
     place. Retourne le chemin à relancer (l'exe courant, nouveau
@@ -102,7 +122,7 @@ def preparer_bascule(exe_courant: Path, nouveau: Path) -> Path:
     étape n'a pas eu lieu."""
     ancien = exe_courant.with_suffix(".old")
     if ancien.exists():
-        ancien.unlink()
+        _supprimer_ou_ecarter(ancien)
     exe_courant.rename(ancien)
     try:
         nouveau.rename(exe_courant)
@@ -116,15 +136,62 @@ def relancer(chemin: Path) -> None:
     subprocess.Popen([str(chemin)], close_fds=True)
 
 
-def nettoyer_restes(exe_courant: Path) -> None:
-    """Au démarrage : efface le « .old » d'une bascule précédente et
-    un éventuel « .new » orphelin (téléchargement interrompu). Si
-    l'effacement échoue (ancien processus encore en fermeture), le
-    prochain démarrage réessaiera."""
-    for suffixe in (".old", ".new"):
-        reste = exe_courant.with_suffix(suffixe)
-        try:
-            if reste.exists():
+def _restes(exe_courant: Path) -> list[Path]:
+    """Fichiers laissés par les bascules : le « .old » et le « .new »
+    officiels, plus les « .reste-<horodatage> » écartés par
+    _supprimer_ou_ecarter."""
+    candidats = [exe_courant.with_suffix(s)
+                 for s in (".old", ".new")]
+    # Les fichiers écartés portent le nom de LEUR fichier d'origine
+    # (« LecteurOSBD.old.reste-… »), pas celui de l'exe : on ratisse
+    # par la racine commune « LecteurOSBD ».
+    candidats += sorted(exe_courant.parent.glob(
+        exe_courant.stem + "*.reste-*"))
+    return [c for c in candidats if c.exists()]
+
+
+def _nettoyer_en_arriere_plan(restes: list[Path],
+                              delais: tuple[float, ...]) -> None:
+    for delai in delais:
+        time.sleep(delai)
+        survivants = []
+        for reste in restes:
+            try:
                 reste.unlink()
+            except OSError:
+                if reste.exists():
+                    survivants.append(reste)
+        restes = survivants
+        if not restes:
+            return
+
+
+def nettoyer_restes(exe_courant: Path,
+                    delais: tuple[float, ...] = (2.0, 5.0, 15.0, 30.0, 60.0)
+                    ) -> list[Path]:
+    """Au démarrage : efface les restes des bascules précédentes.
+
+    Build 6 : le nettoyage est ROBUSTE. Le premier essai est immédiat ;
+    ce qui résiste (l'ancien processus tient encore son exe pendant
+    qu'il se ferme — « l'effacement de l'installation a failed »,
+    constaté par Grégoire le 2026-11-26 alors que la mise à jour,
+    elle, avait marché) est réessayé en arrière-plan avec des délais
+    croissants, en silence : un reste qui traîne ne doit jamais ni
+    faire échouer une mise à jour ni déranger l'utilisateur — au pire,
+    le prochain démarrage finit le ménage. Retourne les restes encore
+    présents après l'essai immédiat."""
+    restes = _restes(exe_courant)
+    survivants = []
+    for reste in restes:
+        try:
+            reste.unlink()
         except OSError:
-            pass
+            if reste.exists():
+                survivants.append(reste)
+    if survivants and delais:
+        fil = threading.Thread(
+            target=_nettoyer_en_arriere_plan,
+            args=(survivants, tuple(delais)),
+            name="nettoyage-restes", daemon=True)
+        fil.start()
+    return survivants

@@ -163,3 +163,39 @@ le projet Android : l'humain capture, l'IA lit).
 - Toujours aucune commande d'actionneur : la routine de sortie
   du mode maintenance n'est publiée nulle part (recherche du
   2026-11-26) — elle ne sera pas devinée.
+
+## Build 6 (2026-11-26) — le piège du « en attente » démonté
+
+Le premier test terrain du build 5 a tout appris : l'effacement a
+fonctionné (C1954, actionneur droit, a disparu pour de bon après
+effacement + cycles du bouton), mais l'app l'avait affiché « REFUS »
+et déclaré le module « propre » sans preuve. Trois correctifs et un
+ménage :
+
+- **NRC 0x78 traversé pour vrai** : l'adaptateur livre le « réponse
+  en attente » du module et cesse d'écouter, alors que la vraie
+  réponse part quelques secondes plus tard. Renvoyer la commande
+  relançait le travail du VDC indéfiniment (aucune lecture ni
+  effacement physiques n'ont jamais abouti au build 5). Après un
+  0x78, `SessionObd.uds()` passe maintenant en écoute filtrée sur
+  l'adresse de réponse du module et capte sa réponse tardive ;
+  `uds_attente` ne sert plus que de seconde chance.
+- **Journal complet** : les refus gardent leurs octets et leur NRC
+  est journalisé — avant, le journal affichait une réponse vide
+  pour chaque refus, indistinguables à la relecture.
+- **Verdicts honnêtes** : l'écran d'effacement du VDC distingue
+  l'effacement confirmé par la relecture, l'effacement accepté avec
+  codes restants, et la relecture non concluante. « Aucun code » ne
+  s'affiche plus que lorsque le module a réellement répondu.
+- **Nettoyage d'installation robuste** (note de Grégoire) : la
+  suppression de l'ancienne installation après une mise à jour
+  échouait quand l'ancien processus tenait encore son fichier —
+  la mise à jour, elle, marchait. Les restes (.old, .new, fichiers
+  écartés) sont maintenant réessayés en arrière-plan avec des
+  délais croissants, en silence, et un vieux .old impossible à
+  supprimer est écarté au lieu de bloquer la bascule suivante.
+- Livré avec : `PROCEDURE-C1955.md`, la procédure multimètre du
+  manuel d'atelier pour la faute restante — l'actionneur EPB
+  arrière gauche (C1955), seule cible maintenant que le droit est
+  réglé ; C1984 (mode maintenance) ne peut pas tomber tant que
+  C1955 est actif.

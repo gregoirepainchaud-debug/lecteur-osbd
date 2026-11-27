@@ -60,8 +60,13 @@ class ResultatUds:
         return cls("positive", octets=octets)
 
     @classmethod
-    def refus(cls, service: int, nrc: int) -> "ResultatUds":
-        return cls("refus", service=service, nrc=nrc)
+    def refus(cls, service: int, nrc: int, octets: bytes = b"") -> "ResultatUds":
+        # Les octets du refus sont CONSERVÉS (build 6) : avant, un
+        # refus ne gardait ni ses octets ni trace écrite de son NRC —
+        # le journal de session affichait une réponse vide et il a été
+        # impossible, le 2026-11-26, de distinguer un 0x78 « en
+        # attente » d'un refus sec à la relecture du journal.
+        return cls("refus", octets=octets, service=service, nrc=nrc)
 
     @classmethod
     def silence(cls) -> "ResultatUds":
@@ -106,7 +111,7 @@ def classifier(octets: bytes, service_attendu: int) -> ResultatUds:
         return ResultatUds.silence()
     premier = u8(octets, 0)
     if premier == 0x7F and len(octets) >= 3:
-        return ResultatUds.refus(u8(octets, 1), u8(octets, 2))
+        return ResultatUds.refus(u8(octets, 1), u8(octets, 2), octets)
     # Positif attendu (service + 0x40) ou toute autre réponse livrée
     # telle quelle : rapportée comme positive non classée, comme
     # dans le build Android.

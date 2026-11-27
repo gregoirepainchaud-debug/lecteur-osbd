@@ -870,28 +870,57 @@ class Application(tk.Tk):
                 self._dossier_courant() / "rapports", "\n".join(lignes_rapport),
                 "avant effacement des codes du VDC")
             resultat = decouverte_mod.effacer_codes_module(self.session, adresse)
-            _r_apres, codes_apres = decouverte_mod.lire_codes_module(
+            r_apres, codes_apres = decouverte_mod.lire_codes_module(
                 self.session, adresse)
             reels_apres = [c for c in codes_apres if est_reel(c.statut)]
-            return fichier, resultat, reels_avant, reels_apres
+            return fichier, resultat, r_apres, reels_avant, reels_apres
 
         def succes(retour):
-            fichier, resultat, reels_avant, reels_apres = retour
+            fichier, resultat, r_apres, reels_avant, reels_apres = retour
             lignes = [f"Rapport archivé : {fichier}", "",
                       "EFFACEMENT AU VDC (UDS 0x14)"]
             if resultat.classe == "positive":
                 lignes.append("Commande acceptée par le module.")
+            elif resultat.classe == "refus" and resultat.nrc == 0x78:
+                lignes.append(
+                    "Le module n'a pas terminé l'effacement dans le "
+                    "délai (NRC 0x78 — « en attente » répété) : "
+                    "l'effacement n'est PAS confirmé.")
             elif resultat.classe == "refus":
                 lignes.append(f"REFUS — NRC 0x{resultat.nrc:02X} "
                               f"({resultat.description_nrc})")
             elif resultat.classe == "erreur_adaptateur":
                 lignes.append(f"Erreur adaptateur — {resultat.message}")
             else:
-                lignes.append("Silence du module.")
-            lignes += ["", f"CODES RÉELS APRÈS EFFACEMENT ({len(reels_apres)})"]
-            if not reels_apres:
-                lignes.append("Aucun — le module est propre à la relecture.")
-            lignes += [f"{c.ligne_affichage()}  [{c.origine}]" for c in reels_apres]
+                lignes.append("Silence du module — effacement NON confirmé.")
+            lignes.append("")
+            # Verdict de relecture HONNÊTE (build 6) : « aucun code »
+            # ne s'affiche que si le module a réellement répondu. Le
+            # build 5 affichait « le module est propre » quand la
+            # relecture n'avait reçu AUCUNE réponse (tous des 0x78) —
+            # un faux verdict, vu sur le terrain le 2026-11-26.
+            if r_apres.classe == "positive":
+                lignes.append(
+                    f"CODES RÉELS APRÈS EFFACEMENT ({len(reels_apres)})")
+                if not reels_apres:
+                    lignes.append(
+                        "Aucun — confirmé par la relecture : le module "
+                        "ne rapporte plus de code réel.")
+                lignes += [f"{c.ligne_affichage()}  [{c.origine}]"
+                           for c in reels_apres]
+            else:
+                if r_apres.classe == "refus":
+                    detail = (f"NRC 0x{r_apres.nrc:02X} "
+                              f"({r_apres.description_nrc})")
+                elif r_apres.classe == "erreur_adaptateur":
+                    detail = f"erreur adaptateur — {r_apres.message}"
+                else:
+                    detail = "silence du module"
+                lignes.append(
+                    f"RELECTURE NON CONCLUANTE ({detail}) — l'état du "
+                    "module après l'effacement n'est pas confirmé. "
+                    "Vérifie par « Cartographier les modules » "
+                    "(onglet Véhicule), qui lit le VDC de façon fiable.")
             lignes += ["",
                        "ÉTAPE SUIVANTE (procédure d'atelier) : applique le "
                        "frein de stationnement plusieurs fois, pédale de "

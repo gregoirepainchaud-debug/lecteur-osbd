@@ -290,13 +290,80 @@ class SessionObd:
                 octets = octets_depuis_lignes(lignes)
                 service = requete[0] if requete else 0
                 resultat = uds_mod.classifier(octets, service)
+            # NRC 0x78 « réponse en attente » (build 6) : l'adaptateur
+            # livre le 0x78 et cesse d'écouter, mais le module envoie
+            # sa vraie réponse quelques secondes plus tard, sans y
+            # être invité. Renvoyer la commande relance son travail
+            # (le VDC du Forester n'a JAMAIS terminé une lecture ni un
+            # effacement physiques sous les réessais du build 5) —
+            # alors on ÉCOUTE la réponse tardive sur son adresse.
+            attente_traversee = False
+            if resultat.classe == "refus" and resultat.nrc == 0x78:
+                tardive = self._attendre_reponse_tardive(
+                    adresse, requete[0] if requete else 0)
+                if tardive is not None:
+                    resultat = tardive
+                    attente_traversee = True
             self.journal.evenement("requete_uds", {
                 "adresse": f"{adresse:03X}",
                 "requete": vers_texte(requete),
                 "reponse": vers_texte(resultat.octets),
                 "classe": resultat.classe,
+                # Le NRC est journalisé (build 6) : avant, un refus ne
+                # laissait aucune trace de son code dans le journal.
+                "nrc": f"0x{resultat.nrc:02X}" if resultat.classe == "refus" else None,
+                "attente_traversee": attente_traversee,
             })
             return resultat
+
+    def _attendre_reponse_tardive(self, adresse: int, service: int,
+                                  delai_s: float = 8.0) -> ResultatUds | None:
+        """Après un NRC 0x78, écoute (moniteur filtré sur l'adresse de
+        réponse du module) la réponse finale que le module envoie de
+        lui-même, et la retourne classifiée. Un autre 0x78 reçu en
+        écoute prolonge l'attente dans la même fenêtre. None si rien
+        de définitif n'arrive avant l'échéance. À appeler sous le
+        verrou de session (déjà tenu par uds())."""
+        reponse_id = adresse + 8
+        reassembleur = uds_mod.ReassembleurIsotp()
+        try:
+            self._commande_interne("ATH1")
+            self._commande_interne(f"ATCF{reponse_id:03X}")
+            self._commande_interne("ATCM000007FF")
+            self._ecrire("STMA" if self.est_stn else "ATMA")
+            limite = time.time() + delai_s
+            while time.time() < limite:
+                ligne = self._lire_ligne(0.4)
+                if ligne is None or ligne == ">":
+                    continue
+                analyse = canbus.analyser_ligne(ligne)
+                if analyse is None:
+                    continue
+                can_id, donnees = analyse
+                if can_id != reponse_id:
+                    continue
+                payload = reassembleur.nourrir(donnees)
+                if payload is None:
+                    continue
+                resultat = uds_mod.classifier(payload, service)
+                if resultat.classe == "refus" and resultat.nrc == 0x78:
+                    continue  # le module demande encore du temps
+                return resultat
+            return None
+        except Exception:
+            return None
+        finally:
+            try:
+                self._ecrire("")
+                self._lire_jusqua_invite(1.5)
+                self._commande_interne("ATH0")
+                self._commande_interne("ATCM00000000")
+            except Exception:
+                pass
+            # Une trame tardive égarée dans le tampon fausserait la
+            # prochaine lecture : on repart d'un tampon vide.
+            self._vider_tampon()
+            self._en_tete_courante = -1
 
     def requete_brute(self, adresse: int, requete: bytes,
                       delai_s: float = 4.0) -> bytes | None:
