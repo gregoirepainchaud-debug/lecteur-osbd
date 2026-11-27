@@ -72,12 +72,14 @@ Ignition OFF. Débrancher AUSSI le gros connecteur du VDCCM (le module
 ABS/VDC dans le compartiment moteur). Résistance entre le VDCCM et le
 connecteur d'étrier gauche, fil par fil : il faut **moins de 1 Ω** par fil.
 
-- Référence du manuel BN/BS : VDCCM **(B310) nº 44 ↔ étrier (R154) nº 1**
-  et **nº 45 ↔ nº 2** (le droit, lui, est en 34/35). Sur le Forester SK,
-  les numéros peuvent différer : fie-toi aux **couleurs des deux fils**
-  au connecteur d'étrier, retrouve les mêmes au connecteur VDCCM — et
-  valide ta méthode en mesurant d'abord le côté DROIT (34/35 chez
-  BN/BS), dont le circuit est prouvé : tu dois y lire < 1 Ω.
+- Broches du Forester SK (manuel Forester 2020, circuit de
+  l'actionneur gauche) : VDCCM **(B310) nº 12 ↔ étrier (R154) nº 1**
+  et **nº 13 ↔ nº 2**. (La famille Legacy BN/BS met le même circuit
+  en 44/45 — ne pas confondre.) En cas de doute, fie-toi aux
+  **couleurs des deux fils** au connecteur d'étrier, retrouve les
+  mêmes au connecteur VDCCM — et valide ta méthode en mesurant
+  d'abord le côté DROIT, dont le circuit est prouvé : tu dois y
+  lire < 1 Ω.
 - Un fil ouvert ou résistif → réparer le faisceau ou le connecteur
   entre VDCCM et étrier gauche. C'est le verdict le plus probable si
   l'étape 1 a dit « moteur bon » et l'étape 0 n'a rien montré.

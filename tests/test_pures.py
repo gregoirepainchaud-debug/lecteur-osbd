@@ -533,3 +533,101 @@ class TestBuild6(unittest.TestCase):
             self.assertEqual(restes, [])
             self.assertFalse(exe.with_suffix(".old").exists())
             self.assertEqual(list(Path(tmp).glob("*.reste-*")), [])
+
+
+class TestBuild7(unittest.TestCase):
+    """Build 7 — terrain du 2026-11-26, session de 22 h : la réponse
+    du VDC arrivait DERRIÈRE le 0x78 dans la même lecture, et la
+    vérification d'immobilité a déclaré « 10 km/h » sur une auto
+    garée depuis une heure (effacement refusé à tort)."""
+
+    def test_suite_apres_78_est_la_vraie_reponse(self):
+        # La charge exacte du journal de 22 h : le cadre NRC puis la
+        # réponse complète du VDC, collés dans la même lecture.
+        brut = (b"\x7f\x19\x78"
+                b"\x59\x02\x0a\x59\x55\x00\x0a\x59\x84\x00\x0a\x00\x00")
+        resultat, suite = uds.classifier_avec_suite(brut, 0x19)
+        self.assertTrue(suite)
+        self.assertEqual(resultat.classe, "positive")
+        codes = uds.analyser_dtc(resultat.octets, "Module 7B0")
+        self.assertEqual([c.code for c in codes], ["C1955", "C1984"])
+
+    def test_78_seul_reste_en_attente(self):
+        resultat, suite = uds.classifier_avec_suite(b"\x7f\x19\x78", 0x19)
+        self.assertFalse(suite)
+        self.assertEqual(resultat.classe, "refus")
+        self.assertEqual(resultat.nrc, 0x78)
+
+    def test_78_suivi_dun_autre_78_reste_en_attente(self):
+        resultat, suite = uds.classifier_avec_suite(
+            b"\x7f\x19\x78\x7f\x19\x78", 0x19)
+        self.assertFalse(suite)
+        self.assertEqual(resultat.nrc, 0x78)
+
+    def test_78_suivi_de_bourrage_ne_devient_pas_positif(self):
+        # Un reste de zéros ne commence pas par l'octet positif
+        # attendu (0x59) : jamais un faux « positif ».
+        resultat, suite = uds.classifier_avec_suite(
+            b"\x7f\x19\x78\x00\x00\x00\x00", 0x19)
+        self.assertFalse(suite)
+        self.assertEqual(resultat.classe, "refus")
+        self.assertEqual(resultat.nrc, 0x78)
+
+    def test_78_suivi_dun_refus_sec_est_definitif(self):
+        resultat, suite = uds.classifier_avec_suite(
+            b"\x7f\x19\x78\x7f\x19\x31", 0x19)
+        self.assertTrue(suite)
+        self.assertEqual(resultat.classe, "refus")
+        self.assertEqual(resultat.nrc, 0x31)
+
+    def test_sans_78_classification_inchangee(self):
+        resultat, suite = uds.classifier_avec_suite(b"\x59\x02\x0a", 0x19)
+        self.assertFalse(suite)
+        self.assertEqual(resultat.classe, "positive")
+
+    def test_vitesse_decodee_par_marqueur_pas_par_decalage(self):
+        # LE faux positif du 2026-11-26 : une réponse UDS tardive en
+        # tête du tampon (« 59 02 0A… ») faisait lire 0x0A = 10 km/h
+        # à décalage fixe. Par marqueur, seule la ligne « 41 0D »
+        # compte.
+        vitesse = pids.par_pid(0x0D)
+        lignes = ["59 02 0A 59 55 00 0A", "41 0D 00"]
+        self.assertEqual(pids.decoder_lignes(vitesse, lignes), 0.0)
+        self.assertEqual(pids.decoder_lignes(vitesse, ["41 0D 2A"]), 42.0)
+        self.assertEqual(
+            pids.decoder_lignes(vitesse, ["41 0D 00", "41 0D 00"]), 0.0)
+        self.assertIsNone(pids.decoder_lignes(vitesse, ["43 00", "47 00"]))
+
+    def _session_avec_vitesse(self, valeur):
+        from lecteur_osbd.journal import JournalSession as JS
+        from lecteur_osbd.session import SessionObd
+        js = JS()
+        js.demarrer()
+        s = SessionObd(js)
+        s.lire_pid = lambda definition: valeur
+        return s, js
+
+    def test_verification_immobilite_journalisee(self):
+        s, js = self._session_avec_vitesse(10.0)
+        self.assertFalse(s.verifier_immobile())
+        evts = [e for e in js._evenements
+                if e["type"] == "verification_immobilite"]
+        self.assertEqual(len(evts), 1)
+        self.assertEqual(evts[0]["details"]["source"], "pid_0d")
+        self.assertEqual(evts[0]["details"]["valeur_kmh"], 10.0)
+        self.assertFalse(evts[0]["details"]["immobile"])
+
+    def test_verification_immobilite_a_larret(self):
+        s, js = self._session_avec_vitesse(0.0)
+        self.assertTrue(s.verifier_immobile())
+        evts = [e for e in js._evenements
+                if e["type"] == "verification_immobilite"]
+        self.assertTrue(evts[0]["details"]["immobile"])
+
+    def test_verification_immobilite_illisible_donc_immobile(self):
+        s, js = self._session_avec_vitesse(None)
+        self.assertTrue(s.verifier_immobile())
+        evts = [e for e in js._evenements
+                if e["type"] == "verification_immobilite"]
+        self.assertIsNone(evts[0]["details"]["valeur_kmh"])
+        self.assertTrue(evts[0]["details"]["immobile"])

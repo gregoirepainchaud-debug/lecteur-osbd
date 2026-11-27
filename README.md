@@ -199,3 +199,28 @@ ménage :
   arrière gauche (C1955), seule cible maintenant que le droit est
   réglé ; C1984 (mode maintenance) ne peut pas tomber tant que
   C1955 est actif.
+
+
+## Build 7 — les lectures ne mentent plus (2026-11-26)
+
+Trois correctifs tirés du journal de terrain de 22 h (auto garée
+depuis une heure) :
+
+- **0x78 suivi de sa réponse** : le VDC livre le « en attente » ET
+  sa vraie réponse dans la même lecture. La classification extrait
+  maintenant la suite après le cadre NRC quand elle est définitive
+  (`classifier_avec_suite`) — la lecture physique du VDC aboutit au
+  lieu d'afficher « refus 0x78 » ; l'écoute tardive du build 6 ne
+  sert que si la suite est vide. Une suite acceptée comme positive
+  doit commencer par l'octet attendu (service + 0x40) : pas de faux
+  positif sur du bourrage.
+- **Vitesse lue par marqueur** : la vérification d'immobilité
+  décodait le PID 0x0D à décalage fixe sur le flux concaténé — une
+  réponse tardive en tête de tampon a fait lire « 10 km/h » sur
+  l'auto garée et bloqué l'effacement. Décodage par recherche du
+  marqueur « 41 0D », ligne par ligne (`decoder_lignes`), et tampon
+  de l'adaptateur vidé avant la lecture.
+- **Vérifications journalisées** : chaque contrôle d'immobilité
+  laisse sa source, la valeur lue et le verdict dans le journal de
+  session (`verification_immobilite`), et un effacement bloqué pour
+  « mouvement » est journalisé comme l'était déjà le blocage VIN.

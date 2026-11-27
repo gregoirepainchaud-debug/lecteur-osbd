@@ -284,19 +284,23 @@ class SessionObd:
             brut = self._lire_jusqua_invite(delai_s)
             lignes = lignes_utiles(brut)
             err = erreur_connue(lignes)
+            suite_apres_78 = False
             if err is not None:
                 resultat = ResultatUds.erreur_adaptateur(err)
             else:
                 octets = octets_depuis_lignes(lignes)
                 service = requete[0] if requete else 0
-                resultat = uds_mod.classifier(octets, service)
-            # NRC 0x78 « réponse en attente » (build 6) : l'adaptateur
-            # livre le 0x78 et cesse d'écouter, mais le module envoie
-            # sa vraie réponse quelques secondes plus tard, sans y
-            # être invité. Renvoyer la commande relance son travail
-            # (le VDC du Forester n'a JAMAIS terminé une lecture ni un
-            # effacement physiques sous les réessais du build 5) —
-            # alors on ÉCOUTE la réponse tardive sur son adresse.
+                resultat, suite_apres_78 = uds_mod.classifier_avec_suite(
+                    octets, service)
+            # NRC 0x78 « réponse en attente » : deux cas réels.
+            # (a) La vraie réponse est DÉJÀ dans la lecture, collée
+            # derrière le cadre NRC — classifier_avec_suite l'a
+            # extraite (build 7 ; c'est le cas du VDC du Forester,
+            # dont l'adaptateur livre les deux réponses ensemble).
+            # (b) Sinon, le module enverra sa réponse quelques
+            # secondes plus tard sans y être invité : on l'ÉCOUTE sur
+            # son adresse (build 6) plutôt que renvoyer la commande,
+            # ce qui relançait son travail indéfiniment.
             attente_traversee = False
             if resultat.classe == "refus" and resultat.nrc == 0x78:
                 tardive = self._attendre_reponse_tardive(
@@ -313,6 +317,7 @@ class SessionObd:
                 # laissait aucune trace de son code dans le journal.
                 "nrc": f"0x{resultat.nrc:02X}" if resultat.classe == "refus" else None,
                 "attente_traversee": attente_traversee,
+                "suite_apres_78": suite_apres_78,
             })
             return resultat
 
@@ -570,8 +575,12 @@ class SessionObd:
     # --- Données en direct ------------------------------------------------
 
     def lire_pid(self, definition) -> float | None:
-        octets = self._commande_octets(definition.demande(0x01), 4.0)
-        return definition.decoder_reponse(octets, 0x01)
+        # Décodage par marqueur, ligne par ligne (build 7) : le
+        # décodage à décalage fixe sur le flux concaténé lisait la
+        # « vitesse » dans n'importe quel octet étranger en tête de
+        # tampon (faux « véhicule en mouvement » du 2026-11-26).
+        lignes = self.commande(definition.demande(0x01), 4.0)
+        return pids_mod.decoder_lignes(definition, lignes, 0x01)
 
     def pid_supportes(self) -> set[int]:
         supportes: set[int] = set()
@@ -590,22 +599,42 @@ class SessionObd:
     def verifier_immobile(self) -> bool:
         """Vrai si le véhicule est immobile. Sources, par ordre :
         vitesses de roue du moniteur CAN si fraîches (< 3 s), sinon
-        PID 0x0D. Vitesse illisible → considéré immobile (journalisé
-        par l'appelant), comme le build Android."""
+        PID 0x0D (tampon vidé avant la lecture, décodage par
+        marqueur). Vitesse illisible → considéré immobile, comme le
+        build Android.
+
+        Chaque vérification est JOURNALISÉE (build 7) — source,
+        valeur lue, verdict. Avant, un refus pour « mouvement »
+        ne laissait aucune trace : le 2026-11-26, une Subaru garée
+        depuis une heure a été déclarée en mouvement sur une lecture
+        contaminée, et le journal ne montrait ni la valeur ni la
+        source pour le prouver."""
+        source, valeur, immobile = "illisible", None, True
         if time.time() * 1000 - self._etat_can_maj_ms < 3000:
             vmax = self.etat_can.vitesse_roue_max()
             if vmax is not None:
-                return vmax < 0.5
-            if self.etat_can.vitesse_kmh is not None:
-                return self.etat_can.vitesse_kmh < 0.5
-        if self.moniteur_actif:
-            return True
-        try:
-            definition = pids_mod.par_pid(0x0D)
-            valeur = self.lire_pid(definition)
-            return (valeur if valeur is not None else 0.0) < 0.5
-        except Exception:
-            return True
+                source, valeur, immobile = "can_roues", vmax, vmax < 0.5
+            elif self.etat_can.vitesse_kmh is not None:
+                source = "can_vitesse"
+                valeur = self.etat_can.vitesse_kmh
+                immobile = valeur < 0.5
+        if valeur is None:
+            if self.moniteur_actif:
+                source = "moniteur_actif"
+            else:
+                try:
+                    self._vider_tampon()
+                    valeur = self.lire_pid(pids_mod.par_pid(0x0D))
+                    source = "pid_0d"
+                    immobile = (valeur if valeur is not None else 0.0) < 0.5
+                except Exception:
+                    source, immobile = "illisible", True
+        self.journal.evenement("verification_immobilite", {
+            "source": source,
+            "valeur_kmh": valeur,
+            "immobile": immobile,
+        })
+        return immobile
 
     # --- Moniteur CAN --------------------------------------------------------
 

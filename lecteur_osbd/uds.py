@@ -118,6 +118,36 @@ def classifier(octets: bytes, service_attendu: int) -> ResultatUds:
     return ResultatUds.positive(octets)
 
 
+def classifier_avec_suite(octets: bytes, service_attendu: int
+                          ) -> tuple[ResultatUds, bool]:
+    """Classification d'une lecture qui peut contenir DEUX réponses :
+    un « en attente » (7F ·· 78) suivi, dans la même lecture, de la
+    vraie réponse du module.
+
+    C'est le comportement réel du VDC du Forester via l'adaptateur
+    (terrain du 2026-11-26, session de 22 h) : l'adaptateur livre le
+    0x78 ET la réponse complète, collés dans le même tampon. Le
+    build 6 classait sur les 3 premiers octets (« refus 0x78 ») puis
+    écoutait 8 s une réponse déjà reçue. Ici : si la suite après le
+    cadre NRC se classe de façon définitive, c'est ELLE le résultat.
+
+    La suite n'est acceptée comme positive que si elle commence par
+    l'octet de réponse positive attendu (service + 0x40) : un reste
+    de bourrage ne doit jamais devenir un faux « positif ».
+    Retourne (résultat, vrai si la suite a fourni le résultat)."""
+    resultat = classifier(octets, service_attendu)
+    if (resultat.classe == "refus" and resultat.nrc == 0x78
+            and len(octets) > 3):
+        suite = octets[3:]
+        candidat = classifier(suite, service_attendu)
+        if candidat.classe == "refus" and candidat.nrc != 0x78:
+            return candidat, True
+        if (candidat.classe == "positive"
+                and suite[0] == ((service_attendu + 0x40) & 0xFF)):
+            return candidat, True
+    return resultat, False
+
+
 def analyser_lire_did(octets: bytes) -> tuple[int, bytes] | None:
     """Réponse à ReadDataByIdentifier : (DID, données utiles)."""
     if len(octets) < 3 or u8(octets, 0) != 0x62:

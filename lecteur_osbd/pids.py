@@ -7,7 +7,7 @@ Dans une réponse mode 01, les données utiles commencent à l'indice 2
 from dataclasses import dataclass
 from typing import Callable
 
-from .hexutil import u8
+from .hexutil import octets_depuis_lignes, u8
 
 
 def _a(o: bytes, i: int) -> int:
@@ -36,6 +36,34 @@ class DefinitionPid:
         if len(octets) < debut + self.nb_octets:
             return None
         return self.formule(octets, debut)
+
+
+def decoder_lignes(definition: DefinitionPid, lignes: list[str],
+                   mode: int = 0x01) -> float | None:
+    """Décode la valeur d'un PID depuis les LIGNES de réponse, en
+    cherchant le marqueur (0x40 + mode, PID) ligne par ligne — la
+    première ligne qui le porte gagne.
+
+    Le décodage à décalage fixe sur la concaténation de toutes les
+    lignes (decoder_reponse appliqué au flux complet) est fragile :
+    quand deux modules répondent au mode 01, ou qu'une réponse
+    tardive d'un autre service traîne dans le tampon, un octet
+    étranger en tête décale tout. Vu sur le terrain le 2026-11-26 :
+    la vérification d'immobilité a lu « 10 km/h » sur une Subaru
+    garée depuis une heure, et l'effacement a été refusé. Ici, seule
+    une ligne portant le vrai marqueur est décodée ; sans marqueur,
+    la valeur est illisible (None), jamais inventée."""
+    marqueur = bytes([0x40 + mode, definition.pid])
+    for ligne in lignes:
+        octets = octets_depuis_lignes([ligne])
+        i = octets.find(marqueur)
+        if i < 0:
+            continue
+        donnees = octets[i:]
+        if len(donnees) < 2 + definition.nb_octets:
+            continue
+        return definition.formule(donnees, 2)
+    return None
 
 
 DEFINITIONS: list[DefinitionPid] = [

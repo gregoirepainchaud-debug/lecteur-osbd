@@ -614,6 +614,8 @@ class Application(tk.Tk):
 
         def travail():
             if not self.session.verifier_immobile():
+                self.journal.evenement("effacement_bloque",
+                                       {"motif": "mouvement"})
                 raise IOError("Véhicule en mouvement (≥ 0,5 km/h) — effacement refusé.")
             if not self.session.derniers_codes:
                 self.session.lire_codes()
@@ -850,6 +852,9 @@ class Application(tk.Tk):
 
         def travail():
             if not self.session.verifier_immobile():
+                self.journal.evenement("effacement_bloque",
+                                       {"motif": "mouvement",
+                                        "module": "7B0"})
                 raise IOError("Véhicule en mouvement (≥ 0,5 km/h) — effacement refusé.")
             adresse = decouverte_mod.ADRESSE_VDC
             identite = decouverte_mod.lire_identite(self.session, adresse)
